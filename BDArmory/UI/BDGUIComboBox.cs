@@ -14,6 +14,7 @@ namespace BDArmory.UI
         float maxHeight;
         GUIStyle listStyle;
         int columns;
+        bool persistant;
 
         bool isClickedComboButton = false;
         bool isOpen = false;
@@ -36,7 +37,8 @@ namespace BDArmory.UI
         /// <param name="maxHeight">The maximum height of the grid before scrolling is enabled.</param>
         /// <param name="listStyle">The GUIStyle to use for the selection grid.</param>
         /// <param name="columns">The number of columns in the selection grid.</param>
-        public BDGUIComboBox(Rect buttonRect, Rect listRect, GUIContent buttonContent, GUIContent[] listContent, float maxHeight, GUIStyle listStyle, int columns = 2)
+        /// <param name="persistant">Does the box remain open after clicking a selection</param>
+        public BDGUIComboBox(Rect buttonRect, Rect listRect, GUIContent buttonContent, GUIContent[] listContent, float maxHeight, GUIStyle listStyle, int columns = 2, bool persistant = false)
         {
             this.buttonRect = buttonRect;
             this.listRect = listRect;
@@ -46,6 +48,7 @@ namespace BDArmory.UI
             this.listStyle.hover.textColor = Color.black;
             this.maxHeight = maxHeight;
             this.columns = columns;
+            this.persistant = persistant;
             UpdateContent(listContent);
         }
 
@@ -55,7 +58,7 @@ namespace BDArmory.UI
         /// <returns>The selected item's index.</returns>
         public int Show()
         {
-            if (GUI.Button(buttonRect, buttonContent, BDArmorySetup.BDGuiSkin.button)) // Button
+            if (GUI.Button(buttonRect, buttonContent, BDArmorySetup.ButtonStyle)) // Button
             {
                 isClickedComboButton = !isClickedComboButton;
             }
@@ -64,15 +67,25 @@ namespace BDArmory.UI
             if (isClickedComboButton) // Selection grid
             {
                 scrollViewVector = GUI.BeginScrollView(scrollViewRect, scrollViewVector, scrollViewInnerRect, BDArmorySetup.BDGuiSkin.horizontalScrollbar, BDArmorySetup.BDGuiSkin.verticalScrollbar);
-                GUI.Box(scrollViewInnerRect, "", BDArmorySetup.BDGuiSkin.box); // Background box in the scroll view.
+                GUI.Box(scrollViewInnerRect, "", BDArmorySetup.SelectedButtonStyle); // Background box in the scroll view.
                 if (selectedItemIndex != (selectedItemIndex = GUI.SelectionGrid(selectionGridRect, selectedItemIndex, listContent, columns, listStyle))) // If the selection is changed, then update the UI and close the combo-box.
                 {
                     if (selectedItemIndex > -1) buttonContent.text = listContent[selectedItemIndex].text;
-                    isClickedComboButton = false;
+                    if (!persistant) isClickedComboButton = false;
                 }
                 GUI.EndScrollView();
             }
 
+            return selectedItemIndex;
+        }
+
+        /// <summary>
+        /// Externally set the selected item index.
+        /// </summary>
+        /// <param name="index"></param>
+        public int SetSelectedItemIndex(int index)
+        {
+            selectedItemIndex = index;
             return selectedItemIndex;
         }
 

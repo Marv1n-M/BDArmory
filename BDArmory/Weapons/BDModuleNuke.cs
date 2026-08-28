@@ -16,10 +16,10 @@ using System.Collections.Generic;
 
 namespace BDArmory.Weapons
 {
-    class BDModuleNuke : PartModule
+    class BDModuleNuke : BDAPartModule
     {
-        [KSPField(isPersistant = true, guiActive = true, guiName = "WARNING: Reactor Safeties:", guiActiveEditor = false), UI_Label(affectSymCounterparts = UI_Scene.All, scene = UI_Scene.All)]//Weapon Name
-        public string status = "OFFLINE";
+        //[KSPField(isPersistant = true, guiActive = true, guiName = "WARNING: Reactor Safeties:", guiActiveEditor = false), UI_Label(affectSymCounterparts = UI_Scene.All, scene = UI_Scene.All)]//Weapon Name
+        //public string status = "OFFLINE";
 
         //[KSPField(isPersistant = true, guiActive = true, guiName = "Coolant Remaining", guiActiveEditor = false), UI_Label(scene = UI_Scene.All)]
         //public double fuelleft = 0;
@@ -76,6 +76,9 @@ namespace BDArmory.Weapons
         [KSPField(isPersistant = true)]
         public string reportingName = "Reactor Containment Failure";
 
+        [KSPField(guiActive = true, guiActiveEditor = false, guiName = "#LOC_BDArmory_Status")]//Status
+        public string guiStatusString = "DISARMED";
+
         MissileLauncher missile;
         public MissileLauncher Launcher
         {
@@ -98,6 +101,23 @@ namespace BDArmory.Weapons
             }
         }
         bool hasCheckedEngineCore = false; // Only check once, it's not going to change.
+
+        bool Armed = false;
+
+        [KSPAction("Arm")]
+        public void ArmAG(KSPActionParam param)
+        {
+            Armed = true;
+            guiStatusString = "ARMED"; // Future me, this needs localization at some point
+            Events[nameof(ArmAG)].guiName = StringUtils.Localize("Disarm Warhead");//"Enable Engage Options"
+        }
+
+        [KSPAction("Detonate")]
+        public void DetonateAG(KSPActionParam param)
+        {
+            if (Armed) Detonate();
+        }
+
         public void Start()
         {
             if (HighLogic.LoadedSceneIsFlight)
@@ -112,13 +132,15 @@ namespace BDArmory.Weapons
                         }
                         part.force_activate();
                     }
+                    // Fields[nameof(status)].guiActive = false;
+                    // Fields[nameof(status)].guiActiveEditor = false;
                 }
                 else
                 {
-                    //Fields["status"].guiActive = false;
-                    // Fields["fuelleft"].guiActive = false;
-                    //Fields["status"].guiActiveEditor = false;
-                    // Fields["fuelleft"].guiActiveEditor = false;
+                    //Fields[nameof(status)].guiActive = false;
+                    // Fields[nameof(fuelleft)].guiActive = false;
+                    //Fields[nameof(status)].guiActiveEditor = false;
+                    // Fields[nameof(fuelleft)].guiActiveEditor = false;
                 }
                 Sourcevessel = part.vessel.GetName();
 
@@ -185,6 +207,7 @@ namespace BDArmory.Weapons
                         }
                     }
                 }
+                if (guiStatusString != "ARMED" && Launcher != null && Launcher.MissileState > MissileBase.MissileStates.Drop) guiStatusString = "ARMED";
             }
         }
 
@@ -192,7 +215,7 @@ namespace BDArmory.Weapons
         {
             if (v != vessel || hasDetonated || goingCritical || !engineCore) return;
             VesselModuleRegistry.OnVesselModified(v);
-            if (VesselModuleRegistry.GetModuleCount<MissileFire>(v) == 0)
+            if (v.ActiveController().WM == null)
             {
                 if (BDArmorySettings.DEBUG_OTHER) Debug.Log("[BDArmory.RWPS3R2NukeModule]: Nuclear engine on " + Sourcevessel + " has become detached.");
                 goingCritical = true;
@@ -222,7 +245,7 @@ namespace BDArmory.Weapons
                 {
                     goingCritical = false;
                     if (BDArmorySettings.DEBUG_OTHER) Debug.Log("[BDArmory.BDModuleNuke]: engines on " + Sourcevessel + " still have fuel, aborting detonation");
-                    StopCoroutine(DelayedDetonation(delay));
+                    yield break;
                 }
                 if (BDACompetitionMode.Instance.competitionIsActive)
                 {
@@ -254,7 +277,7 @@ namespace BDArmory.Weapons
             }
             if (BDArmorySettings.DEBUG_OTHER) Debug.Log("[BDArmory.BDModuleNuke]: Running Detonate() on nukeModule in vessel " + Sourcevessel);
             //affect any nearby parts/vessels that aren't the source vessel
-            NukeFX.CreateExplosion(part.transform.position, Launcher != null ? ExplosionSourceType.Missile : ExplosionSourceType.BattleDamage, Sourcevessel, reportingName, 0, thermalRadius, yield, fluence, isEMP, blastSoundPath, flashModelPath, shockModelPath, blastModelPath, plumeModelPath, debrisModelPath, "", "");
+            NukeFX.CreateExplosion(part.transform.position, Launcher != null ? ExplosionSourceType.Missile : ExplosionSourceType.BattleDamage, Sourcevessel, reportingName, 0, thermalRadius, yield, fluence, isEMP, blastSoundPath, flashModelPath, shockModelPath, blastModelPath, plumeModelPath, debrisModelPath, "", "", nukePart: part);
             hasDetonated = true;
             if (part.vessel != null) // Already in the process of being destroyed.
                 part.Destroy();
@@ -270,7 +293,7 @@ namespace BDArmory.Weapons
                 output.AppendLine($"Yield: {yield}");
                 output.AppendLine($"Generates EMP: {isEMP}");
             }
-            if (Launcher != null)
+            else
             {
                 output.AppendLine($"Nuclear Warhead");
                 output.AppendLine($"Yield: {yield}");

@@ -1,4 +1,4 @@
-﻿using BDArmory.Utils;
+using BDArmory.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +15,7 @@ namespace BDArmory.Weapons.Missiles
         /// </summary>
         Part parentPart;
         static bool hasOnVesselUnloaded = false;
+        public float missileDia = 0.2f;
         public static ObjectPool CreateDummyPool(string modelPath)
         {
             if ((Versioning.version_major == 1 && Versioning.version_minor > 10) || Versioning.version_major > 1) // onVesselUnloaded event introduced in 1.11
@@ -79,6 +80,7 @@ namespace BDArmory.Weapons.Missiles
             {
                 parentPart = null;
                 transform.parent = null;
+                transform.localScale = Vector3.one;
                 gameObject.SetActive(false);
             }
         }

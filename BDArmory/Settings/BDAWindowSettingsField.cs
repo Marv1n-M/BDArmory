@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
-using UniLinq;
+using System.Linq;
 
 using BDArmory.UI;
 
@@ -51,7 +51,7 @@ namespace BDArmory.Settings
                 if (!field.Current.IsDefined(typeof(BDAWindowSettingsField), false)) continue;
                 if (!settings.HasValue(field.Current.Name)) continue;
 
-                object parsedValue = BDAPersistentSettingsField.ParseValue(field.Current.FieldType, settings.GetValue(field.Current.Name));
+                object parsedValue = BDAPersistentSettingsField.ParseValue(field.Current.FieldType, settings.GetValue(field.Current.Name), field.Current.Name);
                 if (parsedValue != null)
                 {
                     field.Current.SetValue(null, parsedValue);

@@ -1,10 +1,11 @@
 using UnityEngine;
 
 using BDArmory.Utils;
+using BDArmory.Control;
 
 namespace BDArmory.Damage
 {
-    public class ModuleDrainIntakes : PartModule
+    public class ModuleDrainIntakes : BDAPartModule
     {
         public float drainRate = 999;
         public float drainDuration = 20;
@@ -23,6 +24,11 @@ namespace BDArmory.Damage
                             if (intake.Current == null) continue;
                             intake.Current.intakeEnabled = true;
                         }
+                    var WM = VesselModuleRegistry.GetMissileFire(vessel);
+                    if (WM != null)
+                    {
+                        WM.debilitated = false; //for weapon selection and targeting;
+                    }
                     part.RemoveModule(this);
                 }
             }
@@ -36,6 +42,11 @@ namespace BDArmory.Damage
                         if (intake.Current == null) continue;
                         intake.Current.intakeEnabled = false;
                     }
+                var WM = VesselModuleRegistry.GetMissileFire(vessel);
+                if (WM != null)
+                {
+                    WM.debilitated = true; //for weapon selection and targeting;
+                }
             }
         }
     }

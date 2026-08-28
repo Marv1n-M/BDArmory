@@ -12,6 +12,7 @@ using BDArmory.Utils;
 using BDArmory.Weapons;
 using BDArmory.Weapons.Missiles;
 using BDArmory.WeaponMounts;
+using System;
 
 namespace BDArmory.Targeting
 {
@@ -20,10 +21,20 @@ namespace BDArmory.Targeting
         public BDTeam Team;
         public bool isMissile;
         public MissileBase MissileBaseModule;
-        public MissileFire weaponManager;
-        Dictionary<BDTeam, List<MissileFire>> friendliesEngaging = new Dictionary<BDTeam, List<MissileFire>>();
-        public Dictionary<BDTeam, bool> detected = new Dictionary<BDTeam, bool>();
-        public Dictionary<BDTeam, float> detectedTime = new Dictionary<BDTeam, float>();
+        public MissileFire WeaponManager // Using a non-static target WM avoids continuing to target debris that has separated from the WM.
+        {
+            get
+            {
+                if (field == null || !field.IsPrimaryWM || field.vessel != vessel)
+                    field = (vessel != null && vessel.loaded) ? vessel.ActiveController().WM : null;
+                if (field != null && field.vessel != vessel) field = null;
+                return field;
+            }
+        }
+
+        Dictionary<BDTeam, List<MissileFire>> friendliesEngaging = [];
+        public Dictionary<BDTeam, bool> detected = [];
+        public Dictionary<BDTeam, float> detectedTime = [];
 
         public float radarBaseSignature = -1;
         public bool radarBaseSignatureNeedsUpdate = true;
@@ -53,7 +64,8 @@ namespace BDArmory.Targeting
             {
                 if (!vessel) return false;
                 if (
-                    (vessel.situation == Vessel.Situations.LANDED ||
+                    (vessel.situation == Vessel.Situations.PRELAUNCH || // Newly spawned
+                    vessel.situation == Vessel.Situations.LANDED ||
                     vessel.situation == Vessel.Situations.SPLASHED) && // Boats should be included
                     !isUnderwater //refrain from shooting subs with missiles
                     )
@@ -98,8 +110,7 @@ namespace BDArmory.Targeting
             {
                 if (!vessel) return false;
                 if (vessel.situation == Vessel.Situations.SPLASHED) return true;
-                else
-                    return false;
+                return false;
             }
         }
 
@@ -116,7 +127,7 @@ namespace BDArmory.Targeting
         {
             get
             {
-                return vessel.vesselTransform.position;
+                return vessel.CoM;
             }
         }
 
@@ -134,6 +145,16 @@ namespace BDArmory.Targeting
             }
         }
 
+        public string Name()
+        {
+            return (vessel ? vessel.vesselName : "Null");
+        }
+
+        public Guid ID()
+        {
+            return (vessel ? vessel.id : Guid.Empty);
+        }
+
         public bool isThreat
         {
             get
@@ -147,11 +168,13 @@ namespace BDArmory.Targeting
                 {
                     return true;
                 }
-                else if (weaponManager && weaponManager.vessel.isCommandable) //Fix for GLOC'd pilots. IsControllable merely checks if plane has pilot; Iscommandable checks if they're conscious
+                else if (WeaponManager)
                 {
-                    return true;
+                    return WeaponManager.vessel.isCommandable; //isn't debris / has command part
+                    //return weaponManager.vessel.IsControllable; //vessel has probecore & EC/pilot && pilot is conscious
+                    //enable this if you want exceedingly honorable pilots who hold fire if their target has GLOC'ed themselves
+                    // GLOC'ed craft now go neutral stick, so they no longer get locked in a perma-stun deathloop                    
                 }
-
                 return false;
             }
         }
@@ -168,13 +191,15 @@ namespace BDArmory.Targeting
                 {
                     return false;
                 }
-                else if (weaponManager && weaponManager.debilitated)
+                else if (WeaponManager && WeaponManager.debilitated)
                 {
                     return true;
                 }
                 return false;
             }
         }
+
+        public List<(string, float)> debugTargetPriorities = []; // Debug info for target priorities.
 
         void Awake()
         {
@@ -201,20 +226,20 @@ namespace BDArmory.Targeting
             }
 
             Team = null;
-            var mf = VesselModuleRegistry.GetMissileFire(vessel, true);
+            var mf = vessel.ActiveController().WM;
             if (mf != null)
             {
-                Team = mf.Team;
-                weaponManager = mf;
+                Team = mf.Team; // While the primary WM may change, the Team shouldn't.
             }
-            else
+            else if (vessel.IsMissile())
             {
                 var ml = VesselModuleRegistry.GetMissileBase(vessel, true);
                 if (ml != null)
                 {
-                    isMissile = true;
+                    ml.SetTargetInfo(this);
+                    /*isMissile = true;
                     MissileBaseModule = ml;
-                    Team = ml.Team;
+                    Team = ml.Team;*/
                 }
             }
 
@@ -254,7 +279,8 @@ namespace BDArmory.Targeting
             if (radarMassAtUpdate > 0)
             {
                 float massPercentageDifference = (radarMassAtUpdate - vessel.GetTotalMass()) / radarMassAtUpdate;
-                if ((massPercentageDifference > 0.025f) && (weaponManager) && (weaponManager.missilesAway.Count == 0) && !weaponManager.guardFiringMissile)
+                var weaponManager = WeaponManager;
+                if (massPercentageDifference > 0.025f && weaponManager && weaponManager.missilesAway.Count == 0 && !weaponManager.guardFiringMissile)
                 {
                     alreadyScheduledRCSUpdate = true;
                     yield return new WaitForSeconds(1.0f);    // Wait for any explosions to finish
@@ -265,6 +291,126 @@ namespace BDArmory.Targeting
             }
         }
 
+        /*void OnGUI()
+        {
+            if (BDArmorySettings.DEBUG_LINES)
+            {
+                if (vesselTransform == null) UpdateBounds();
+                Vector3 vesselPos = vesselTransform.position;
+                //Vector3 vesselForward = vesselTransform.up;
+                //Vector3 vesselUp = -vesselTransform.forward;
+                //Vector3 vesselRight = vesselTransform.right;
+                //Vector3 scaledDiff = vesselTransform.TransformDirection(localBoundsCenter);
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + (0.5f * bounds.y) * vesselForward, vesselPos - (0.5f * bounds.y) * vesselForward, 5, Color.blue);
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + (0.5f * bounds.x) * vesselRight, vesselPos - (0.5f * bounds.x) * vesselRight, 5, Color.green);
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + (0.5f * bounds.z) * vesselUp, vesselPos - (0.5f * bounds.z) * vesselUp, 5, Color.red);
+                //Vector3 rand = UnityEngine.Random.onUnitSphere;
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledBiasedVector(rand, 0.5f)), vessel.CoM, 5, Color.magenta);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledBiasedVector(Vector3.up, 0.5f)), vessel.CoM, 5, Color.yellow);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledBiasedVector(-Vector3.forward, 0.5f)), vessel.CoM, 5, Color.yellow);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetLocalCoM()), vessel.CoM, 5, Color.blue);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(localBoundsCenter), vesselPos, 5, Color.grey);
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + (GetBoundsScaledVectorAlt(0.6f * Vector3.up)), vesselPos + scaledDiff, 5, Color.cyan);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(Vector3.up, 0.5f)), vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(-Vector3.up, 0.5f)), 5, Color.green);
+                //GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(Vector3.right, 0.5f)), vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(-Vector3.right, 0.5f)), 5, Color.green);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(-Vector3.forward, 0.5f)), vesselPos + GetWorldAlignedVector(GetBoundsScaledVector(Vector3.forward, 0.5f)), 5, Color.red);
+                GUIUtils.DrawLineBetweenWorldPositions(vesselPos + GetRadarGlint(), vessel.CoM, 5, Color.magenta);
+                GUIUtils.DrawLabelOnWorldPos(vesselPos, $"bounds.length={bounds.y}\nbounds.width={bounds.x}\nbounds.height={bounds.z}", new Vector2(200, 200));
+            }
+        }*/
+
+        public void GetVesselTransform()
+        {
+            vesselTransform = vessel.ReferenceTransform;
+        }
+
+        public Vector3 GetWorldAlignedVector(Vector3 localVector)
+        {
+            if (vesselTransform != vessel.ReferenceTransform) UpdateBounds();
+            return vesselTransform.TransformDirection(localVector);
+        }
+
+        public Vector3 GetBoundsScaledWorldVector(Vector3 localVector, float boundScale)
+        {
+            if (vesselTransform != vessel.ReferenceTransform) UpdateBounds();
+            return vesselTransform.TransformDirection(new Vector3(boundScale * bounds.x * localVector.x + localBoundsCenter.x, boundScale * bounds.y * localVector.y + localBoundsCenter.y, boundScale * bounds.z * localVector.z + localBoundsCenter.z));
+        }
+
+        public Vector3 GetBoundsScaledVector(Vector3 localVector, float boundScale)
+        {
+            if (vesselTransform != vessel.ReferenceTransform) UpdateBounds();
+            return new Vector3(boundScale * bounds.x * localVector.x + localBoundsCenter.x, boundScale * bounds.y * localVector.y + localBoundsCenter.y, boundScale * bounds.z * localVector.z + localBoundsCenter.z);
+        }
+
+        public Vector3 GetBoundsScaledBiasedWorldVector(Vector3 localVector, float boundScale)
+        {
+            if (vesselTransform != vessel.ReferenceTransform) UpdateBounds();
+            Vector3 localRelCoM = GetLocalCoM();
+            Vector3 biasedVector = new Vector3(localVector.x * (localVector.x > 0f ? (boundScale * bounds.x + (localBoundsCenter.x - localRelCoM.x)) : (boundScale * bounds.x - (localBoundsCenter.x - localRelCoM.x))) + localRelCoM.x,
+                                               localVector.y * (localVector.y > 0f ? (boundScale * bounds.y + (localBoundsCenter.y - localRelCoM.y)) : (boundScale * bounds.y - (localBoundsCenter.y - localRelCoM.y))) + localRelCoM.y,
+                                               localVector.z * (localVector.z > 0f ? (boundScale * bounds.z + (localBoundsCenter.z - localRelCoM.z)) : (boundScale * bounds.z - (localBoundsCenter.z - localRelCoM.z))) + localRelCoM.z);
+            return vesselTransform.TransformDirection(biasedVector);
+        }
+
+        public Vector3 GetBoundsScaledBiasedVector(Vector3 localVector, float boundScale)
+        {
+            if (vesselTransform != vessel.ReferenceTransform) UpdateBounds();
+            Vector3 localRelCoM = GetLocalCoM();
+            Vector3 biasedVector = new Vector3(localVector.x * (localVector.x > 0f ? (boundScale * bounds.x + (localBoundsCenter.x - localRelCoM.x)) : (boundScale * bounds.x - (localBoundsCenter.x - localRelCoM.x))) + localRelCoM.x,
+                                               localVector.y * (localVector.y > 0f ? (boundScale * bounds.y + (localBoundsCenter.y - localRelCoM.y)) : (boundScale * bounds.y - (localBoundsCenter.y - localRelCoM.y))) + localRelCoM.y,
+                                               localVector.z * (localVector.z > 0f ? (boundScale * bounds.z + (localBoundsCenter.z - localRelCoM.z)) : (boundScale * bounds.z - (localBoundsCenter.z - localRelCoM.z))) + localRelCoM.z);
+            /*if (log)
+            {
+                Debug.Log($"[BDArmory.TargetInfo.GetBoundsScaledBiasedVector] localVector: {localVector}, localBoundsCenter: {localBoundsCenter}, localRelCoM: {localRelCoM}, bounds: {bounds}, biasedVector: {biasedVector}, x: {(localVector.x > 0f ? (boundScale * bounds.x + (localBoundsCenter.x - localRelCoM.x)) : (boundScale * bounds.x - (localBoundsCenter.x - localRelCoM.x)))}, y: {(localVector.y > 0f ? (boundScale * bounds.y + (localBoundsCenter.y - localRelCoM.y)) : (boundScale * bounds.y - (localBoundsCenter.y - localRelCoM.y)))}, z: {(localVector.z > 0f ? (boundScale * bounds.z + (localBoundsCenter.z - localRelCoM.z)) : (boundScale * bounds.z - (localBoundsCenter.z - localRelCoM.z)))}");
+            }*/
+            return biasedVector;
+        }
+
+        float timeOfLastCoMUpdate = 0f;
+        Vector3 localCoM;
+        public Vector3 GetLocalCoM()
+        {
+            if (Time.time > timeOfLastCoMUpdate)
+            {
+                localCoM = vesselTransform.InverseTransformDirection(vessel.CoM - vesselTransform.position);
+                timeOfLastCoMUpdate = Time.time;
+            }
+
+            return localCoM;
+        }
+
+        Vector3 prevGlint = Vector3.zero;
+        Vector3 futureGlint = Vector3.zero;
+        float glintTime = 0f;
+        const float glintInterval = 1f;
+        readonly float glintIntInv = 1f / glintInterval;
+
+        Vector3 currGlint = Vector3.zero;
+        Vector3 currLocalGlint = Vector3.zero;
+        float glintUpdateTime = 0f;
+        public Vector3 GetRadarGlint()
+        {
+            float currTime = Time.time;
+            if (glintUpdateTime >= currTime)
+            {
+                return currGlint;
+            }
+            glintUpdateTime = currTime;
+            currTime -= glintTime;
+            if (currTime > glintInterval)
+            {
+                prevGlint = futureGlint;
+                futureGlint = GetBoundsScaledBiasedVector(UnityEngine.Random.onUnitSphere, 0.5f * VectorUtils.Gaussian());
+                glintTime = glintUpdateTime;
+                currLocalGlint = prevGlint;
+                currGlint = GetWorldAlignedVector(prevGlint);
+                return currGlint;
+            }
+            currLocalGlint = Vector3.LerpUnclamped(prevGlint, futureGlint, currTime * glintIntInv);
+            currGlint = GetWorldAlignedVector(currLocalGlint);
+            return currGlint;
+        }
+
         void FixedUpdate()
         {
             if (vessel == null)
@@ -273,12 +419,27 @@ namespace BDArmory.Targeting
             }
             else
             {
-                if ((vessel.vesselType == VesselType.Debris) && (weaponManager == null))
+                if (vessel.vesselType == VesselType.Debris && WeaponManager == null)
                 {
                     BDATargetManager.RemoveTarget(this);
                     Team = null;
                 }
             }
+        }
+
+        /*Vector3 vesselSizeB;
+        readonly static Quaternion vesselRot = Quaternion.Inverse(Quaternion.LookRotation(Vector3.up, -Vector3.forward));
+        readonly static Quaternion vesselRot2 = Quaternion.LookRotation(Vector3.up, -Vector3.forward);*/
+
+        Transform vesselTransform;
+        Vector3 localBoundsCenter;
+        public void UpdateBounds()
+        {
+            GetVesselTransform();
+            Bounds tempBounds = isMissile ? vessel.GetRendererBounds() : vessel.GetColliderBounds();
+            localBoundsCenter = tempBounds.center;
+            bounds = tempBounds.size;
+            timeOfLastCoMUpdate = 0f;
         }
 
         public void UpdateTargetPartList()
@@ -293,7 +454,17 @@ namespace BDArmory.Targeting
 
             if (vessel == null) return;
 
-            bounds = vessel.GetBounds(); // Update vessel bounds on part changes
+            UpdateBounds(); // Update vessel bounds on part changes
+            /*vessel.UpdateVesselSize();
+            Vector3 tempSize = vessel.vesselSize;
+            Quaternion rot = Quaternion.Inverse(vessel.ReferenceTransform.rotation);
+            Vector3 vesselForward = vessel.ReferenceTransform.up;
+            Vector3 vesselUp = -vessel.ReferenceTransform.forward;
+            Vector3 vesselRight = vessel.ReferenceTransform.right;
+            vesselSizeB = new Vector3(Vector3.Dot(tempSize, vesselForward), Vector3.Dot(tempSize, vesselRight), Vector3.Dot(tempSize, vesselUp));
+            // vesselSizeB and vesselSizeBQuat2 are in GLOBAL coords
+            // vesselSizeBQuat is in local coords
+            Debug.Log($"[BDArmory.TargetInfo] bounds: {bounds}, vesselSize: {tempSize}, vesselSizeB: {vesselSizeB}, vesselSizeBQuat: {rot * vesselRot * tempSize}, vesselSizeBQuat2: {rot * tempSize}, vesselSizeBQuat3: {rot * vesselRot2 * tempSize}");*/
 
             // Get the parts via the VesselModuleRegistry to avoid the expensive Find... commands.
             VesselModuleRegistry.OnVesselModified(vessel); // Make sure the vessel is up-to-date since this can happen as part of an event.
@@ -383,7 +554,7 @@ namespace BDArmory.Targeting
         public float TargetPriRange(MissileFire myMf) // 1- Target range normalized with max weapon range
         {
             if (myMf == null) return 0;
-            float thisDist = (position - myMf.transform.position).magnitude;
+            float thisDist = (position - myMf.vessel.CoM).magnitude;
             float maxWepRange = 0;
             var weapons = VesselModuleRegistry.GetModules<ModuleWeapon>(myMf.vessel);
             if (weapons == null) return 0;
@@ -400,16 +571,20 @@ namespace BDArmory.Targeting
         public float TargetPriATA(MissileFire myMf) // Square cosine of antenna train angle
         {
             if (myMf == null) return 0;
-            float ataDot = Vector3.Dot(myMf.vessel.srf_vel_direction, (position - myMf.vessel.vesselTransform.position).normalized);
+            float ataDot = Vector3.Dot(myMf.vessel.srf_vel_direction, (position - myMf.vessel.CoM).normalized);
             ataDot = (ataDot + 1) / 2; // Adjust from 0-1 instead of -1 to 1
             return ataDot * ataDot;
         }
-        public float TargetPriEngagement(MissileFire mf) // Differentiate between flying and surface targets
+        public float TargetPriEngagement(MissileFire mf, double engagingAlt) // Differentiate between flying and surface targets
         {
             if (mf == null) return 0; // no WM, so no valid target, no impact on targeting score
             if (mf.vessel.LandedOrSplashed)
             {
                 return -1; //ground target
+            }
+            else if (mf.vessel.horizontalSrfSpeed < 30 && (mf.vessel.radarAltitude < 200 && engagingAlt > 800)) //if craft is flatspinning or similar, and is lower than 200m, while the aircraft targeting it is higher than 800, regard as semi-landed
+            {
+                return -0.5f;
             }
             else
             {
@@ -428,7 +603,7 @@ namespace BDArmory.Targeting
         public float TargetPriClosureTime(MissileFire myMf) // Time to closest point of approach, normalized for one minute
         {
             if (myMf == null) return 0;
-            float targetDistance = Vector3.Distance(vessel.transform.position, myMf.vessel.transform.position);
+            float targetDistance = Vector3.Distance(vessel.CoM, myMf.vessel.CoM);
             Vector3 currVel = (float)myMf.vessel.srfSpeed * myMf.vessel.Velocity().normalized;
             float closureTime = Mathf.Clamp((float)(1 / ((vessel.Velocity() - currVel).magnitude / targetDistance)), 0f, 60f);
             return 1 - closureTime / 60f;
@@ -453,15 +628,13 @@ namespace BDArmory.Targeting
 
         public float TargetPriFriendliesEngaging(MissileFire myMf)
         {
-            if (myMf == null || myMf.wingCommander == null || myMf.wingCommander.friendlies == null) return 0;
-            float friendsEngaging = Mathf.Max(NumFriendliesEngaging(myMf.Team) - 1, 0);
+            if (myMf == null || myMf.wingCommander == null) return 0;
             float teammates = myMf.wingCommander.friendlies.Count;
+            if (teammates == 0) return 0; // No teammates
+            float friendsEngaging = Mathf.Max(NumFriendliesEngaging(myMf.Team) - 1, 0);
             friendsEngaging = 1 - Mathf.Clamp(friendsEngaging / teammates, 0f, 1f);
             friendsEngaging = friendsEngaging == 0f ? -1f : friendsEngaging;
-            if (teammates > 0)
-                return friendsEngaging; // Range is -1, 0 to 1. -1 if all teammates are engaging target, between 0-1 otherwise depending on number of teammates engaging
-            else
-                return 0; // No teammates
+            return friendsEngaging; // Range is -1, 0 to 1. -1 if all teammates are engaging target, between 0-1 otherwise depending on number of teammates engaging
         }
 
         public float TargetPriThreat(MissileFire mf, MissileFire myMf)
@@ -479,8 +652,8 @@ namespace BDArmory.Targeting
         public float TargetPriAoD(MissileFire myMF)
         {
             if (myMF == null) return 0;
-            var relativePosition = vessel.transform.position - myMF.vessel.transform.position;
-            float theta = Vector3.Angle(myMF.vessel.srf_vel_direction, relativePosition);
+            var relativePosition = vessel.CoM - myMF.vessel.CoM;
+            float theta = VectorUtils.Angle(myMF.vessel.srf_vel_direction, relativePosition);
             float cosTheta2 = Mathf.Cos(theta / 2f);
             return Mathf.Clamp(((cosTheta2 * cosTheta2 + 1f) * 100f / Mathf.Max(10f, relativePosition.magnitude)) / 2, 0, 1); // Ranges from 0 to 1, clamped at 1 for distances closer than 100m
         }
@@ -517,22 +690,18 @@ namespace BDArmory.Targeting
         public float TargetPriProtectTeammate(MissileFire mf, MissileFire myMf) // If target is attacking one of our teammates. 1 if true, 0 if false.
         {
             if (myMf == null) return 0;
-            if (mf == null || mf.currentTarget == null || mf.currentTarget.weaponManager == null) return 0;
-            return (mf.currentTarget.weaponManager != myMf && mf.currentTarget.weaponManager.Team == myMf.Team) ? 1 : 0; // Not us, but on the same team.
+            var targetMf = mf != null && mf.currentTarget != null ? mf.currentTarget.WeaponManager : null;
+            if (targetMf == null) return 0;
+            return (targetMf != myMf && targetMf.Team == myMf.Team) ? 1 : 0; // Not us, but on the same team.
         }
 
         public float TargetPriProtectVIP(MissileFire mf, MissileFire myMf) // If target is attacking our VIP(s)
         {
             if (mf == null || myMf == null) return 0;
-            if ((mf.vessel != null) && (mf.currentTarget != null) && (mf.currentTarget.weaponManager != null))
-            {
-                bool attackingOurVIPs = mf.currentTarget.weaponManager.isVIP && (myMf.Team == mf.currentTarget.weaponManager.Team);
-                return ((attackingOurVIPs == true) ? 1 : -1); // Ranges -1 to 1, 1 if target is attacking our VIP(s), -1 if it is not
-            }
-            else
-            {
-                return 0;
-            }
+            var targetMf = mf != null && mf.currentTarget != null ? mf.currentTarget.WeaponManager : null;
+            if (mf.vessel == null || targetMf == null) return 0;
+            bool attackingOurVIPs = targetMf.isVIP && myMf.Team == targetMf.Team;
+            return attackingOurVIPs ? 1 : 0; // Ranges 0 to 1, 1 if target is attacking our VIP(s), 0 if it is not
         }
 
         public float TargetPriAttackVIP(MissileFire mf) // If target is enemy VIP
@@ -541,7 +710,7 @@ namespace BDArmory.Targeting
             if (mf.vessel != null)
             {
                 bool isVIP = mf.isVIP;
-                return ((isVIP == true) ? 1 : -1); // Ranges -1 to 1, 1 if target is an enemy VIP, -1 if it is not
+                return ((isVIP == true) ? 1 : 0); // Ranges 0 to 1, 1 if target is an enemy VIP, 0 if it is not
             }
             else
             {
@@ -571,7 +740,7 @@ namespace BDArmory.Targeting
                     friendlies.Add(mf);
             }
             else
-                friendliesEngaging.Add(mf.Team, new List<MissileFire> { mf });
+                friendliesEngaging.Add(mf.Team, [mf]);
         }
 
         public void Disengage(MissileFire mf)
@@ -591,9 +760,28 @@ namespace BDArmory.Targeting
 
         public bool IsCloser(TargetInfo otherTarget, MissileFire myMf)
         {
-            float thisSqrDist = (position - myMf.transform.position).sqrMagnitude;
-            float otherSqrDist = (otherTarget.position - myMf.transform.position).sqrMagnitude;
+            float thisSqrDist = (position - myMf.vessel.CoM).sqrMagnitude;
+            float otherSqrDist = (otherTarget.position - myMf.vessel.CoM).sqrMagnitude;
             return thisSqrDist < otherSqrDist;
+        }
+
+        public bool SafeOrbitalIntercept(MissileFire myMf)
+        {
+            // For orbital AI craft, avoid intercepting targets if we are descending and the maneuver will bring our own periapsis to an unsafe altitude
+
+            if (!vessel) return true;
+            var orbitalAI = myMf.vessel.ActiveController().OrbitalAI;
+            if (orbitalAI == null || !orbitalAI.pilotEnabled)
+                return true;
+
+            Orbit o = myMf.vessel.orbit;
+            bool unsafeDescent = o.timeToPe > 0 && o.timeToPe < o.timeToAp && o.PeA < (1.2f * o.referenceBody.MinSafeAltitude());
+            bool inRange = (vessel.CoM - myMf.vessel.CoM).sqrMagnitude < orbitalAI.interceptRanges.y * orbitalAI.interceptRanges.y;
+            Vector3 relVel = vessel.Velocity() - myMf.vessel.Velocity();
+            bool killVelocityNeeded = Vector3.Dot(vessel.CoM - myMf.vessel.CoM, relVel) < 0f &&
+                Vector3.Dot(o.GetPrograde(Planetarium.GetUniversalTime()), relVel) < 0f; // Moving away from each other in prograde direction (kill vel direction is retrograde)
+
+            return (inRange || !(unsafeDescent && killVelocityNeeded));
         }
 
         public void VesselModified(Vessel v)
@@ -617,7 +805,7 @@ namespace BDArmory.Targeting
 
             //float dispersionMax = 100f;
 
-            float dispersion = Random.Range(0, dispersionMax);
+            float dispersion = UnityEngine.Random.Range(0, dispersionMax);
 
             TargetCOM_ = v.CoM + new Vector3(0, dispersion);
 

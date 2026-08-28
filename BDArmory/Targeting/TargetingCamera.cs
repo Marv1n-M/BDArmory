@@ -2,6 +2,7 @@ using UnityEngine;
 
 using BDArmory.Settings;
 using BDArmory.Utils;
+using BDArmory.ModIntegration;
 
 namespace BDArmory.Targeting
 {
@@ -13,6 +14,7 @@ namespace BDArmory.Targeting
         TGPCameraEffects camEffects;
         Light nvLight;
         public bool nvMode = false;
+        public bool color = false;
 
         private Texture2D reticleTex;
 
@@ -34,6 +36,7 @@ namespace BDArmory.Targeting
 
         Camera[] cameras;
         public static Transform cameraTransform;
+        public bool[] CamEnabled = [true, true, true, true];
 
         bool cameraEnabled;
 
@@ -83,6 +86,7 @@ namespace BDArmory.Targeting
 
             for (int i = 0; i < cameras.Length; i++)
             {
+                if (cameras[i] == null) continue;
                 cameras[i].fieldOfView = fov;
             }
             currentFOV = fov;
@@ -131,6 +135,7 @@ namespace BDArmory.Targeting
 
             for (int i = 0; i < cameras.Length; i++)
             {
+                if (cameras[i] == null) continue;
                 cameras[i].enabled = false;
             }
 
@@ -141,8 +146,8 @@ namespace BDArmory.Targeting
 
         void RenderCameras()
         {
-            if (cameras[3] != null) cameras[3].Render();
-            if (cameras[2] != null) cameras[2].Render();
+            if (cameras[3] != null && CamEnabled[3]) cameras[3].Render(); // Galaxy cam
+            if (cameras[2] != null && CamEnabled[2]) cameras[2].Render(); // Sky cam
 
             Color origAmbientColor = RenderSettings.ambientLight;
             if (nvMode)
@@ -150,8 +155,8 @@ namespace BDArmory.Targeting
                 RenderSettings.ambientLight = new Color(0.5f, 0.5f, 0.5f, 1);
                 nvLight.enabled = true;
             }
-            if (cameras[1] != null) cameras[1].Render();
-            if (cameras[0] != null) cameras[0].Render();
+            if (cameras[1] != null && CamEnabled[1]) cameras[1].Render(); // Far cam
+            if (cameras[0] != null && CamEnabled[0]) cameras[0].Render(); // Near cam
 
             nvLight.enabled = false;
             if (nvMode)
@@ -185,6 +190,7 @@ namespace BDArmory.Targeting
             {
                 for (int i = 0; i < cameras.Length; i++)
                 {
+                    if (cameras[i] == null) continue;
                     cameras[i].enabled = false;
                 }
             }
@@ -213,8 +219,10 @@ namespace BDArmory.Targeting
             if (targetCamRenderTexture == null)
             {
                 int res = Mathf.RoundToInt(BDArmorySettings.TARGET_CAM_RESOLUTION);
-                targetCamRenderTexture = new RenderTexture(res, res, 24);
-                targetCamRenderTexture.antiAliasing = 1;
+                targetCamRenderTexture = new RenderTexture(res, res, (int)RenderTextureFormat.RGBAUShort)
+                {
+                    antiAliasing = 1
+                };
                 targetCamRenderTexture.Create();
             }
 
@@ -234,6 +242,7 @@ namespace BDArmory.Targeting
             GameObject cam1Obj = new GameObject();
             Camera nearCam = cam1Obj.AddComponent<Camera>();
             nearCam.CopyFrom(fCamNear);
+            nearCam.name = "TGP Near Camera";
             nearCam.transform.parent = cameraTransform;
             nearCam.transform.localRotation = Quaternion.identity;
             nearCam.transform.localPosition = Vector3.zero;
@@ -250,6 +259,7 @@ namespace BDArmory.Targeting
             GameObject cam2Obj = new GameObject();
             Camera farCam = cam2Obj.AddComponent<Camera>();
             farCam.CopyFrom(fCamFar);
+            farCam.name = "TGP Far Camera";
             farCam.transform.parent = cameraTransform;
             farCam.transform.localRotation = Quaternion.identity;
             farCam.transform.localPosition = Vector3.zero;
@@ -262,6 +272,7 @@ namespace BDArmory.Targeting
             Camera skyCam = skyCamObj.AddComponent<Camera>();
             Camera mainSkyCam = FindCamera("Camera ScaledSpace");
             skyCam.CopyFrom(mainSkyCam);
+            skyCam.name = "TGP Sky Camera";
             skyCam.transform.parent = mainSkyCam.transform;
             skyCam.transform.localRotation = Quaternion.identity;
             skyCam.transform.localPosition = Vector3.zero;
@@ -275,6 +286,7 @@ namespace BDArmory.Targeting
             Camera galaxyCam = galaxyCamObj.AddComponent<Camera>();
             Camera mainGalaxyCam = FindCamera("GalaxyCamera");
             galaxyCam.CopyFrom(mainGalaxyCam);
+            galaxyCam.name = "TGP Galaxy Camera";
             galaxyCam.transform.parent = mainGalaxyCam.transform;
             galaxyCam.transform.position = Vector3.zero;
             galaxyCam.transform.localRotation = Quaternion.identity;
@@ -293,6 +305,13 @@ namespace BDArmory.Targeting
 
             nvLight.cullingMask = 1 << 0;
             nvLight.enabled = false;
+
+            if (!SystemInformation.isDirectX && Scatterer.IsInstalled)
+            {
+                Debug.LogWarning($"[BDArmory.TargetingCamera]: OpenGL and Scatterer detected, applying hack to work around https://github.com/LGhassen/Scatterer/issues/229");
+                CamEnabled[1] = false;
+                nearCam.farClipPlane = farCam.farClipPlane;
+            }
         }
 
         private Camera FindCamera(string cameraName)
@@ -320,6 +339,7 @@ namespace BDArmory.Targeting
                     { Destroy(camera.gameObject); }
                 }
             }
+            if (targetCamRenderTexture != null) targetCamRenderTexture.Release();
         }
 
         public static bool IsTGPCamera(Camera c)

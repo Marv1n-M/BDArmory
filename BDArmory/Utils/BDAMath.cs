@@ -1,4 +1,6 @@
-﻿using UnityEngine;
+using System;
+using UnityEngine;
+using System.Runtime.CompilerServices;
 
 namespace BDArmory.Utils
 {
@@ -45,9 +47,10 @@ namespace BDArmory.Utils
             return point - (distance * planeNormal);
         }
 
+        [Obsolete("Use -VectorUtils.GetAngleOnPlane(fromDirection, toDirection, referenceRight) instead.")]
         public static float SignedAngle(Vector3 fromDirection, Vector3 toDirection, Vector3 referenceRight)
         {
-            float angle = Vector3.Angle(fromDirection, toDirection);
+            float angle = VectorUtils.Angle(fromDirection, toDirection);
             float sign = Mathf.Sign(Vector3.Dot(toDirection, referenceRight));
             float finalAngle = sign * angle;
             return finalAngle;
@@ -70,15 +73,54 @@ namespace BDArmory.Utils
             return sqrt1;
         }
 
+        /// <summary>
+        /// Solve quadratic of a•t²+v•t=d for t, where acceleration (a) and distance (d) are assumed to be non-negative and v is the speed in the direction of the target.
+        /// </summary>
+        /// <param name="distance"></param>
+        /// <param name="acceleration"></param>
+        /// <param name="vel"></param>
+        /// <returns></returns>
         public static float SolveTime(float distance, float acceleration, float vel = 0)
         {
-            float a = 0.5f * acceleration;
-            float b = vel;
-            float c = -Mathf.Abs(distance);
+            if (acceleration == 0f)
+            {
+                if (vel == 0)
+                    return float.MaxValue;
+                else
+                    return Mathf.Abs(distance) / vel;
+            }
+            else
+            {
+                float a = 0.5f * acceleration;
+                float b = vel;
+                float c = -Mathf.Abs(distance);
 
-            float x = (-b + BDAMath.Sqrt(b * b - 4 * a * c)) / (2 * a);
+                float x = (-b + BDAMath.Sqrt(b * b - 4 * a * c)) / (2 * a);
 
-            return x;
+                return x;
+            }
+        }
+
+        /// <summary>
+        /// A double version of Mathf.Clamp.
+        /// </summary>
+        public static double Clamp(double value, double min, double max)
+        {
+            return Math.Min(Math.Max(value, min), max);  // This is about 50% faster than using conditionals. Oddly, the same doesn't apply for float, which is considerably slower.
+            // return value < min ? min : value > max ? max : value;
+        }
+
+        /// <summary>
+        /// Equivalent to Mathf.Approximately, but includes a third value used for computing the tolerance.
+        /// This is useful for comparing changing values a and b when they're small relative to an original value c.
+        /// </summary>
+        /// <param name="a"></param>
+        /// <param name="b"></param>
+        /// <param name="c"></param>
+        /// <returns></returns>
+        public static bool Approximately(float a, float b, float c = 0f)
+        {
+            return Mathf.Abs(b - a) < Mathf.Max(1E-06f * Mathf.Max(Mathf.Abs(a), Mathf.Abs(b), Mathf.Abs(c)), Mathf.Epsilon * 8f);
         }
     }
 }

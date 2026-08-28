@@ -1,9 +1,11 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using UnityEngine;
 
 using BDArmory.Damage;
 using BDArmory.Initialization;
 using BDArmory.Settings;
+using Expansions.Serenity;
+using System.Linq;
 
 namespace BDArmory.Extensions
 {
@@ -81,31 +83,14 @@ namespace BDArmory.Extensions
                 }
             }
             */
+            if (Utils.ProjectileUtils.IsArmorPart(p)) return 0; //Armor panels don't have HP, so don't score/deal HP damage
             float damage_ = 0f;
             //////////////////////////////////////////////////////////
             // Explosive Hitpoints
             //////////////////////////////////////////////////////////
 
-            switch (sourceType)
-            {
-                case ExplosionSourceType.Missile:
-                    damage_ = (BDArmorySettings.DMG_MULTIPLIER / 100) * BDArmorySettings.EXP_DMG_MOD_MISSILE * explosiveDamage * multiplier;
-                    break;
-                case ExplosionSourceType.Rocket:
-                    damage_ = (BDArmorySettings.DMG_MULTIPLIER / 100) * BDArmorySettings.EXP_DMG_MOD_ROCKET * explosiveDamage * multiplier;
-                    break;
-                case ExplosionSourceType.BattleDamage:
-                    damage_ = (BDArmorySettings.DMG_MULTIPLIER / 100) * BDArmorySettings.EXP_DMG_MOD_BATTLE_DAMAGE * explosiveDamage;
-                    break;
-                case ExplosionSourceType.Bullet:
-                    damage_ = (BDArmorySettings.DMG_MULTIPLIER / 100) * BDArmorySettings.EXP_DMG_MOD_BALLISTIC_NEW * explosiveDamage * multiplier;
-                    break;
-                default: // Other?
-                    damage_ = (BDArmorySettings.DMG_MULTIPLIER / 100) * explosiveDamage;
-                    break;
-            }
+            damage_ = explosiveDamage * ExplosiveDamageModifier(sourceType, multiplier);
 
-            var damage_before = damage_;
             //////////////////////////////////////////////////////////
             //   Armor Reduction factors
             //////////////////////////////////////////////////////////
@@ -144,6 +129,26 @@ namespace BDArmory.Extensions
             return damage_;
         }
 
+        /// <summary>
+        /// Get the appropriate modifier for explosive damage of the given type and multiplier.
+        /// </summary>
+        /// <param name="sourceType"></param>
+        /// <param name="multiplier"></param>
+        /// <returns></returns>
+        public static float ExplosiveDamageModifier(ExplosionSourceType sourceType, float multiplier = 1f)
+        {
+            return BDArmorySettings.DMG_MULTIPLIER / 100f *
+            (sourceType switch
+            {
+                ExplosionSourceType.Bullet => BDArmorySettings.EXP_DMG_MOD_BALLISTIC_NEW * multiplier,
+                ExplosionSourceType.Rocket => BDArmorySettings.EXP_DMG_MOD_ROCKET * multiplier,
+                ExplosionSourceType.Missile => BDArmorySettings.EXP_DMG_MOD_MISSILE * multiplier,
+                ExplosionSourceType.BattleDamage => BDArmorySettings.EXP_DMG_MOD_BATTLE_DAMAGE,
+                _ => 1f
+            });
+        }
+
+        //bullet/rocket kinetic damage
         public static float AddBallisticDamage(this Part p,
                                                float mass,
                                                float caliber,
@@ -151,7 +156,8 @@ namespace BDArmory.Extensions
                                                float penetrationfactor,
                                                float bulletDmgMult,
                                                float impactVelocity,
-                                               ExplosionSourceType sourceType) //bullet/rocket kinetic damage
+                                               ExplosionSourceType sourceType,
+                                               bool explosionProjectile = false) // "explosionProjectile" specifically is intended for fragments and projectiles that come from explosions
         {
             if (BDArmorySettings.PAINTBALL_MODE)
             {
@@ -167,6 +173,7 @@ namespace BDArmory.Extensions
                 }
             }
             */
+            if (Utils.ProjectileUtils.IsArmorPart(p)) return 0; //Armor panels don't have HP, so don't score/deal HP damage
             //////////////////////////////////////////////////////////
             // Basic Kinetic Formula
             //////////////////////////////////////////////////////////
@@ -174,31 +181,39 @@ namespace BDArmory.Extensions
             //1e-4 constant for adjusting MegaJoules for gameplay
 
             float damage_;
-            switch (sourceType)
+            if (!explosionProjectile)
             {
-                case ExplosionSourceType.Rocket:
-                    damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
-                            * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
-                            * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
-                    break;
-                case ExplosionSourceType.BattleDamage:
-                    damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
-                            * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
-                            * 1e-4f * BDArmorySettings.EXP_DMG_MOD_BATTLE_DAMAGE;
-                    break;
-                case ExplosionSourceType.Bullet:
-                    damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
-                            * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
-                            * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
-                    break;
-                default: // Other?    
-                    damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
-                            * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
-                            * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
-                    break;
+                switch (sourceType)
+                {
+                    case ExplosionSourceType.Rocket:
+                        damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
+                                * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
+                                * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
+                        break;
+                    case ExplosionSourceType.BattleDamage:
+                        damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
+                                * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
+                                * 1e-4f * BDArmorySettings.EXP_DMG_MOD_BATTLE_DAMAGE;
+                        break;
+                    case ExplosionSourceType.Bullet:
+                        damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
+                                * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
+                                * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
+                        break;
+                    default: // Other?    
+                        damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
+                                * (BDArmorySettings.DMG_MULTIPLIER / 100) * bulletDmgMult * multiplier
+                                * 1e-4f * BDArmorySettings.BALLISTIC_DMG_FACTOR;
+                        break;
+                }
+            }
+            else
+            {
+                damage_ = (0.5f * (mass * impactVelocity * impactVelocity))
+                        * ExplosiveDamageModifier(sourceType, bulletDmgMult * multiplier)
+                        * 1e-4f;
             }
 
-            var damage_before = damage_;
             //////////////////////////////////////////////////////////
             //   Armor Reduction factors
             //////////////////////////////////////////////////////////
@@ -361,6 +376,37 @@ namespace BDArmory.Extensions
             }
             //return Dependencies.Get<DamageService>().GetPartArmor_svc(p);
         }
+
+        public static float GetRealArmorThickness(this Part p)
+        {
+            if (p == null) return 0f;
+            float realArmor = Dependencies.Get<DamageService>().GetPartRealArmor_svc(p);
+            if (float.IsNaN(realArmor))
+            {
+                if (BDArmorySettings.DEBUG_ARMOR) Debug.Log("[BDArmory.PartExtensions]: GetRealArmorThickness; realArmor is NaN");
+                return 0f;
+            }
+            else
+            {
+                return realArmor;
+            }
+        }
+
+        public static float GetRealArmorPercentage(this Part p)
+        {
+            if (p == null) return 0f;
+            float armorQtyP = Dependencies.Get<DamageService>().GetPartArmorQtyP_svc(p);
+            if (float.IsNaN(armorQtyP))
+            {
+                if (BDArmorySettings.DEBUG_ARMOR) Debug.Log("[BDArmory.PartExtensions]: GetRealArmorPercentage; armorQtyP is NaN");
+                return 0f;
+            }
+            else
+            {
+                return armorQtyP;
+            }
+        }
+
         public static float GetArmorMaxThickness(this Part p)
         {
             if (p == null) return 0f;
@@ -395,28 +441,10 @@ namespace BDArmory.Extensions
 
             return damage_ / maxDamage_;
         }
-
-        public static void RefreshAssociatedWindows(this Part part)
-        {
-            //Thanks FlowerChild
-            //refreshes part action window
-
-            //IEnumerator<UIPartActionWindow> window = UnityEngine.Object.FindObjectsOfType(typeof(UIPartActionWindow)).Cast<UIPartActionWindow>().GetEnumerator();
-            //while (window.MoveNext())
-            //{
-            //    if (window.Current == null) continue;
-            //    if (window.Current.part == part)
-            //    {
-            //        window.Current.displayDirty = true;
-            //    }
-            //}
-            //window.Dispose();
-
-            MonoUtilities.RefreshContextWindows(part);
-        }
-
+       
         public static bool IsMissile(this Part part)
         {
+            if (part == null || part.Modules == null) return false;
             if (part.Modules.Contains("BDModularGuidance")) return true;
             if (part.Modules.Contains("MissileBase") || part.Modules.Contains("MissileLauncher"))
             {
@@ -426,7 +454,7 @@ namespace BDArmory.Extensions
                 {
                     if (partModules.Current.moduleName == "MultiMissileLauncher")
                     {
-                        return (((Weapons.Missiles.MultiMissileLauncher)partModules.Current).isClusterMissile);
+                        return ((Weapons.Missiles.MultiMissileLauncher)partModules.Current).isClusterMissile;
                     }
                 }
                 //return ((part.Modules.Contains("MissileBase") || part.Modules.Contains("MissileLauncher") ||
@@ -437,6 +465,12 @@ namespace BDArmory.Extensions
         public static bool IsWeapon(this Part part)
         {
             return part.Modules.Contains("ModuleWeapon");
+        }
+        public static bool IsFunctional(this Part part)
+        {
+            return (part.isEngine() || part.isAntenna(out ModuleDeployableAntenna antenna) || part.isBaseServo(out BaseServo serv) || part.isDecoupler(out ModuleDecouple decoupler) || part.isGenerator(out ModuleGenerator gen)
+                || part.isRadiator(out ModuleDeployableRadiator rad) || part.isRobotic() || part.isRoboticHinge() || part.isRoboticPiston() || part.isRoboticRotationServo() || part.isRoboticRotor()
+                || part.Modules.Contains("ModuleGrappleNode") || part.Modules.Contains("ModuleResourceConverter") || part.Modules.Contains("ModuleCoreHeat"));
         }
         public static float GetArea(this Part part, bool isprefab = false, Part prefab = null)
         {
@@ -480,24 +514,65 @@ namespace BDArmory.Extensions
         }
 
         private static bool tweakScaleChecked = false;
-        private static bool tweakScaleInstalled = false;
+        private static bool tweakScaleInstalled
+        {
+            get
+            {
+                if (!tweakScaleChecked) CheckTweakScaleInstalled();
+                return field;
+            }
+            set;
+        }
+        private static void CheckTweakScaleInstalled()
+        {
+            foreach (var assy in AssemblyLoader.loadedAssemblies)
+                if (assy.assembly.FullName.Contains("TweakScale"))
+                    tweakScaleInstalled = true;
+            tweakScaleChecked = true;
+        }
         public static float GetTweakScaleMultiplier(this Part part)
         {
             float scaleMultiplier = 1f;
-            if (!tweakScaleChecked)
-            {
-                foreach (var assy in AssemblyLoader.loadedAssemblies)
-                    if (assy.assembly.FullName.Contains("TweakScale"))
-                        tweakScaleInstalled = true;
-                tweakScaleChecked = true;
-            }
             if (tweakScaleInstalled && part.Modules.Contains("TweakScale"))
             {
                 var tweakScaleModule = part.Modules["TweakScale"];
-                scaleMultiplier = tweakScaleModule.Fields["currentScale"].GetValue<float>(tweakScaleModule) /
-                                  tweakScaleModule.Fields["defaultScale"].GetValue<float>(tweakScaleModule);
+                var currentScale = tweakScaleModule.Fields["currentScale"].GetValue<float>(tweakScaleModule);
+                var defaultScale = tweakScaleModule.Fields["defaultScale"].GetValue<float>(tweakScaleModule);
+                scaleMultiplier = currentScale / defaultScale;
             }
             return scaleMultiplier;
+        }
+        public static float GetTweakScaleMassMultiplier(this Part part)
+        {
+            float massMultiplier = 1f;
+            if (tweakScaleInstalled && part.Modules.Contains("TweakScale"))
+            {
+                var tweakScaleModule = part.Modules["TweakScale"];
+                var massMultiplierField = tweakScaleModule.Fields["MassScale"];
+                if (massMultiplierField == null)
+                {
+                    float linScale = part.GetTweakScaleMultiplier();
+                    return linScale * linScale * linScale; // Hacked together support for TweakScale Rescaled
+                    // This is gonna be inaccurate for *many* parts
+                }
+                massMultiplier = massMultiplierField.GetValue<float>(tweakScaleModule);
+            }
+            return massMultiplier;
+        }
+        public static float GetTweakScaleDryCost(this Part part)
+        {
+            float dryCost = 0;
+            if (tweakScaleInstalled && part.Modules.Contains("TweakScale"))
+            {
+                var tweakScaleModule = part.Modules["TweakScale"];
+                var dryCostField = tweakScaleModule.Fields["DryCost"];
+                if (dryCostField == null)
+                {
+                    return -1;
+                }
+                dryCost = dryCostField.GetValue<float>(tweakScaleModule);
+            }
+            return dryCost;
         }
 
         public static bool IsAero(this Part part)
@@ -711,6 +786,22 @@ namespace BDArmory.Extensions
         private static bool IsKerbalSeat_1_10(this Part part)
         {
             return part.FindModuleImplementing<KerbalSeat>() != null;
+        }
+    
+        /// <summary>
+        /// Check if a part is attached to the ship in the SPH.
+        /// </summary>
+        /// <param name="part"></param>
+        /// <returns></returns>
+        public static bool ConnectedToShip(this Part part)
+        {
+            if (!HighLogic.LoadedSceneIsEditor) return false;
+            var ship = EditorLogic.fetch.ship;
+            if (ship is null) return false;
+            var shipRoot = ship.Parts.First();
+            while (shipRoot.parent is not null) shipRoot = shipRoot.parent;
+            while (part.parent is not null) part = part.parent;
+            return part == shipRoot;
         }
     }
 }

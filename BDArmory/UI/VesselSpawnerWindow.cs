@@ -1,4 +1,3 @@
-using KSP.Localization;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -13,6 +12,8 @@ using BDArmory.Settings;
 using BDArmory.Utils;
 using BDArmory.VesselSpawning.SpawnStrategies;
 using BDArmory.VesselSpawning;
+using BDArmory.Extensions;
+using BDArmory.Modules;
 
 namespace BDArmory.UI
 {
@@ -38,10 +39,12 @@ namespace BDArmory.UI
         private bool planetslist = false;
         int selected_index = 1;
         int WaygateCount = -1;
-        public float SelectedGate = 0;
+        public int gateModelsCount => WaygateCount;
+        public float SelectedGate = -1;
         public static string Gatepath;
         public string SelectedModel;
-        string[] gateFiles;
+        public string[] gateFiles;
+        private bool waypointsRunning = false;
         #endregion
         #region GUI strings
         string tournamentStyle = $"{(TournamentStyle)0}";
@@ -143,11 +146,15 @@ namespace BDArmory.UI
             _ready = false;
             StartCoroutine(WaitForBdaSettings());
 
-            leftLabel = new GUIStyle();
-            leftLabel.alignment = TextAnchor.UpperLeft;
-            leftLabel.normal.textColor = Color.white;
-            listStyle = new GUIStyle(BDArmorySetup.BDGuiSkin.button);
-            listStyle.fixedHeight = 18; //make list contents slightly smaller
+            leftLabel = new GUIStyle
+            {
+                alignment = TextAnchor.UpperLeft,
+                normal = new GUIStyleState { textColor = Color.white }
+            };
+            listStyle = new GUIStyle(BDArmorySetup.ButtonStyle)
+            {
+                fixedHeight = 18 //make list contents slightly smaller
+            };
 
             // Spawn fields
             spawnFields = new Dictionary<string, NumericInputField> {
@@ -162,7 +169,7 @@ namespace BDArmory.UI
 
             try
             {
-                Gatepath = Path.GetFullPath(Path.GetDirectoryName(Path.Combine(KSPUtil.ApplicationRootPath, "GameData", WaypointFollowingStrategy.ModelPath)));
+                Gatepath = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(KSPUtil.ApplicationRootPath, "GameData", WaypointFollowingStrategy.ModelPath)));
                 gateFiles = Directory.GetFiles(Gatepath, "*.mu").Select(f => Path.GetFileName(f)).ToArray();
                 Array.Sort(gateFiles, StringComparer.Ordinal); // Sort them alphabetically, uppercase first.
                 WaygateCount = gateFiles.Count() - 1;
@@ -171,8 +178,12 @@ namespace BDArmory.UI
             {
                 Debug.LogError($"[BDArmory.VesselSpawnerWindow]: Failed to locate waypoint marker models: {e.Message}");
             }
-            if (WaygateCount >= 0) SelectedModel = Path.GetFileNameWithoutExtension(gateFiles[(int)SelectedGate]);
+            if (WaygateCount >= 0)
+            {
+                if (SelectedGate >= 0) SelectedModel = Path.GetFileNameWithoutExtension(gateFiles[(int)Mathf.Clamp(SelectedGate, 0, WaygateCount)]);
+            }
             else Debug.LogWarning($"[BDArmory.VesselSpawnerWindow]: No waypoint gate models found in {Gatepath}!");
+            if (BDArmorySettings.WAYPOINT_COURSE_INDEX >= WaypointCourses.CourseLocations.Count) BDArmorySettings.WAYPOINT_COURSE_INDEX = 0; // Sanitise the index in case the course list has changed.
         }
 
         private IEnumerator WaitForBdaSettings()
@@ -211,7 +222,6 @@ namespace BDArmory.UI
                 return;
 
             _windowWidth = BDArmorySettings.VESSEL_SPAWNER_WINDOW_WIDTH;
-
             SetNewHeight(_windowHeight);
             BDArmorySetup.WindowRectVesselSpawner = new Rect(
                 BDArmorySetup.WindowRectVesselSpawner.x,
@@ -220,6 +230,8 @@ namespace BDArmory.UI
                 _windowHeight
             );
             BDArmorySetup.SetGUIOpacity();
+            var guiMatrix = GUI.matrix;
+            if (BDArmorySettings.UI_SCALE_ACTUAL != 1) GUIUtility.ScaleAroundPivot(BDArmorySettings.UI_SCALE_ACTUAL * Vector2.one, BDArmorySetup.WindowRectVesselSpawner.position);
             BDArmorySetup.WindowRectVesselSpawner = GUI.Window(
                 GUIUtility.GetControlID(FocusType.Passive),
                 BDArmorySetup.WindowRectVesselSpawner,
@@ -234,7 +246,10 @@ namespace BDArmory.UI
                 if (Event.current.type == EventType.MouseDown && !observerWindowRect.Contains(Event.current.mousePosition))
                     ShowObserverWindow(false);
                 else
+                {
+                    if (BDArmorySettings.UI_SCALE_ACTUAL != 1) { GUI.matrix = guiMatrix; GUIUtility.ScaleAroundPivot(BDArmorySettings.UI_SCALE_ACTUAL * Vector2.one, observerWindowRect.position); }
                     observerWindowRect = GUILayout.Window(GUIUtility.GetControlID(FocusType.Passive), observerWindowRect, ObserverWindow, StringUtils.Localize("#LOC_BDArmory_ObserverSelection_Title"), BDArmorySetup.BDGuiSkin.window);
+                }
             }
         }
 
@@ -261,24 +276,32 @@ namespace BDArmory.UI
             spawnFields["lat"].tryParseValueNow();
             spawnFields["lon"].tryParseValueNow();
             spawnFields["alt"].tryParseValueNow();
-            BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x = spawnFields["lat"].currentValue;
-            BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y = spawnFields["lon"].currentValue;
+            BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x = spawnFields["lat"].CurrentValue;
+            BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y = spawnFields["lon"].CurrentValue;
             BDArmorySettings.VESSEL_SPAWN_WORLDINDEX = FlightGlobals.currentMainBody != null ? FlightGlobals.currentMainBody.flightGlobalsIndex : 1; //selected_index?
-            BDArmorySettings.VESSEL_SPAWN_ALTITUDE = (float)spawnFields["alt"].currentValue;
+            BDArmorySettings.VESSEL_SPAWN_ALTITUDE = (float)spawnFields["alt"].CurrentValue;
+        }
+
+        /// <summary>
+        /// Update the value of the spawn fields from the current settings values.
+        /// </summary>
+        public void RefreshSpawnFieldsFromSettings()
+        {
+            spawnFields["lat"].SetCurrentValue(BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x);
+            spawnFields["lon"].SetCurrentValue(BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y);
+            spawnFields["alt"].SetCurrentValue(BDArmorySettings.VESSEL_SPAWN_ALTITUDE);
         }
 
         private void SetNewHeight(float windowHeight)
         {
             var previousWindowHeight = BDArmorySetup.WindowRectVesselSpawner.height;
             BDArmorySetup.WindowRectVesselSpawner.height = windowHeight;
-            if (BDArmorySettings.STRICT_WINDOW_BOUNDARIES && windowHeight < previousWindowHeight && Mathf.RoundToInt(BDArmorySetup.WindowRectVesselSpawner.y + previousWindowHeight) == Screen.height) // Window shrunk while being at edge of screen.
-                BDArmorySetup.WindowRectVesselSpawner.y = Screen.height - BDArmorySetup.WindowRectVesselSpawner.height;
-            GUIUtils.RepositionWindow(ref BDArmorySetup.WindowRectVesselSpawner);
+            GUIUtils.RepositionWindow(ref BDArmorySetup.WindowRectVesselSpawner, previousWindowHeight);
         }
 
+        (float, float)[] cacheVesselSpawnDistance;
         private void WindowVesselSpawner(int id)
         {
-            GUI.DragWindow(new Rect(0, 0, _windowWidth - _buttonSize - _margin, _buttonSize + _margin));
             if (GUI.Button(new Rect(_windowWidth - _buttonSize - (_margin - 2), _margin, _buttonSize - 2, _buttonSize - 2), " X", BDArmorySetup.CloseButtonStyle))
             {
                 SetVisible(false);
@@ -288,7 +311,7 @@ namespace BDArmory.UI
             float line = 0.25f;
             var rects = new List<Rect>();
 
-            if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_SPAWN_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_SpawnOptions")}", BDArmorySettings.SHOW_SPAWN_OPTIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide spawn options
+            if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_SPAWN_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_SpawnOptions")}", BDArmorySettings.SHOW_SPAWN_OPTIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide spawn options
             {
                 BDArmorySettings.SHOW_SPAWN_OPTIONS = !BDArmorySettings.SHOW_SPAWN_OPTIONS;
             }
@@ -297,13 +320,15 @@ namespace BDArmory.UI
                 if (BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE)
                 { // Absolute distance
                     GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_SpawnDistance")}:  ({(BDArmorySettings.VESSEL_SPAWN_DISTANCE < 1000 ? $"{BDArmorySettings.VESSEL_SPAWN_DISTANCE:G4}m" : $"{BDArmorySettings.VESSEL_SPAWN_DISTANCE / 1000:G4}km")})", leftLabel);//Spawn Distance
-                    BDArmorySettings.VESSEL_SPAWN_DISTANCE = UI_FloatSemiLogRange.ToSemiLogValue(Mathf.Round(GUI.HorizontalSlider(SRightSliderRect(line), UI_FloatSemiLogRange.FromSemiLogValue(BDArmorySettings.VESSEL_SPAWN_DISTANCE, 10), 1, UI_FloatSemiLogRange.FromSemiLogValue(200000, 10))), 10, 1);
+                    BDArmorySettings.VESSEL_SPAWN_DISTANCE = GUIUtils.HorizontalSemiLogSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_SPAWN_DISTANCE, 10, 200000, 1.5f, false, false, ref cacheVesselSpawnDistance);
                 }
                 else
                 { // Distance factor
                     GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_SpawnDistanceFactor")}:  ({BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR})", leftLabel);//Spawn Distance Factor
                     BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR = Mathf.Round(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR / 10f, 1f, 10f) * 10f);
                 }
+                GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_SpawnRefHeading")}:  ({BDArmorySettings.VESSEL_SPAWN_REF_HEADING:000}°)", leftLabel); // Reference Heading
+                BDArmorySettings.VESSEL_SPAWN_REF_HEADING = Mathf.Round(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_SPAWN_REF_HEADING, 0, 359));
 
                 GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_SpawnEaseInSpeed")}:  ({BDArmorySettings.VESSEL_MOVER_MIN_LOWER_SPEED})", leftLabel);//Spawn Ease-In Speed (actually the VM min lower speed)
                 BDArmorySettings.VESSEL_MOVER_MIN_LOWER_SPEED = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_MOVER_MIN_LOWER_SPEED, 0.1f, 1f), 0.1f);
@@ -423,6 +448,9 @@ namespace BDArmory.UI
                 GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_Teams")}:  ({numberOfTeams})", leftLabel); // Number of teams.
                 BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS, 0f, 11f));
 
+                GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_KerbalSuitTypeOverride")}: {(KerbalSuitSelector.KerbalSuit)BDArmorySettings.VESSEL_SPAWN_KERBAL_SUIT_TYPE}", leftLabel); // Default Kerbal Suit
+                BDArmorySettings.VESSEL_SPAWN_KERBAL_SUIT_TYPE = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.VESSEL_SPAWN_KERBAL_SUIT_TYPE, -1f, 4f));
+
                 GUI.Label(SLeftRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_SpawnFilesLocation")} (AutoSpawn{Path.DirectorySeparatorChar}): ", leftLabel); // Craft files location
                 BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION = GUI.TextField(SRightRect(line), BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION);
 
@@ -432,9 +460,14 @@ namespace BDArmory.UI
                 BDArmorySettings.VESSEL_SPAWN_RANDOM_ORDER = GUI.Toggle(SRightRect(line), BDArmorySettings.VESSEL_SPAWN_RANDOM_ORDER, StringUtils.Localize("#LOC_BDArmory_Settings_SpawnRandomOrder"));  // Toggle between random spawn order or fixed.
                 BDArmorySettings.VESSEL_SPAWN_CONTINUE_SINGLE_SPAWNING = GUI.Toggle(SLeftRect(++line), BDArmorySettings.VESSEL_SPAWN_CONTINUE_SINGLE_SPAWNING, StringUtils.Localize("#LOC_BDArmory_Settings_SpawnContinueSingleSpawning"));  // Spawn craft again after single spawn competition finishes.
                 BDArmorySettings.VESSEL_SPAWN_INITIAL_VELOCITY = GUI.Toggle(SRightRect(line), BDArmorySettings.VESSEL_SPAWN_INITIAL_VELOCITY, StringUtils.Localize("#LOC_BDArmory_Settings_SpawnInitialVelocity")); // Planes spawn at their idle speed.
-                BDArmorySettings.VESSEL_SPAWN_DUMP_LOG_EVERY_SPAWN = GUI.Toggle(SLeftRect(++line), BDArmorySettings.VESSEL_SPAWN_DUMP_LOG_EVERY_SPAWN, StringUtils.Localize("#LOC_BDArmory_Settings_SpawnDumpLogsEverySpawn")); //Dump logs every spawn.
+                ++line; // Placeholder for a removed entry.
+                BDArmorySettings.VESSEL_SPAWN_CS_FOLLOWS_CENTROID = GUI.Toggle(SRightRect(line), BDArmorySettings.VESSEL_SPAWN_CS_FOLLOWS_CENTROID, StringUtils.Localize("#LOC_BDArmory_Settings_CSFollowsCentroid")); //CS spawn-point follows centroid.
 
-                if (GUI.Button(SRightRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnSpawnProbeHere"), BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SLeftButtonRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_WarpHere"), BDArmorySetup.ButtonStyle))
+                {
+                    SpawnUtils.ShowSpawnPoint(selected_index, BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x, BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y, BDArmorySettings.VESSEL_SPAWN_ALTITUDE);
+                }
+                if (GUI.Button(SRightButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnSpawnProbeHere"), BDArmorySetup.ButtonStyle))
                 {
                     var spawnProbe = VesselSpawner.SpawnSpawnProbe(FlightCamera.fetch.Distance * FlightCamera.fetch.mainCamera.transform.forward);
                     if (spawnProbe != null)
@@ -444,7 +477,7 @@ namespace BDArmory.UI
                     }
                 }
 
-                if (GUI.Button(SLeftButtonRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_VesselSpawnGeoCoords"), BDArmorySetup.BDGuiSkin.button)) //"Vessel Spawning Location"
+                if (GUI.Button(SLeftButtonRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_VesselSpawnGeoCoords"), BDArmorySetup.ButtonStyle)) //"Vessel Spawning Location"
                 {
                     Ray ray = new Ray(FlightCamera.fetch.mainCamera.transform.position, FlightCamera.fetch.mainCamera.transform.forward);
                     RaycastHit hit;
@@ -456,40 +489,40 @@ namespace BDArmory.UI
                     }
                 }
                 rects = SRight3Rects(line);
-                spawnFields["lat"].tryParseValue(GUI.TextField(rects[0], spawnFields["lat"].possibleValue, 8, spawnFields["lat"].style));
-                spawnFields["lon"].tryParseValue(GUI.TextField(rects[1], spawnFields["lon"].possibleValue, 8, spawnFields["lon"].style));
-                spawnFields["alt"].tryParseValue(GUI.TextField(rects[2], spawnFields["alt"].possibleValue, 8, spawnFields["alt"].style));
-                BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x = spawnFields["lat"].currentValue;
-                BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y = spawnFields["lon"].currentValue;
+                spawnFields["lat"].TryParseValue(GUI.TextField(rects[0], spawnFields["lat"].possibleValue, 8, spawnFields["lat"].style));
+                spawnFields["lon"].TryParseValue(GUI.TextField(rects[1], spawnFields["lon"].possibleValue, 8, spawnFields["lon"].style));
+                spawnFields["alt"].TryParseValue(GUI.TextField(rects[2], spawnFields["alt"].possibleValue, 8, spawnFields["alt"].style));
+                BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x = spawnFields["lat"].CurrentValue;
+                BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y = spawnFields["lon"].CurrentValue;
                 BDArmorySettings.VESSEL_SPAWN_WORLDINDEX = FlightGlobals.currentMainBody != null ? FlightGlobals.currentMainBody.flightGlobalsIndex : 1;
-                BDArmorySettings.VESSEL_SPAWN_ALTITUDE = (float)spawnFields["alt"].currentValue;
+                BDArmorySettings.VESSEL_SPAWN_ALTITUDE = (float)spawnFields["alt"].CurrentValue;
 
                 txtName = GUI.TextField(SRightButtonRect(++line), txtName);
-                if (GUI.Button(SLeftButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_SaveSpawnLoc"), BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SLeftButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_SaveSpawnLoc"), BDArmorySetup.ButtonStyle))
                 {
                     string newName = string.IsNullOrEmpty(txtName.Trim()) ? "New Location" : txtName.Trim();
-                    SpawnLocations.spawnLocations.Add(new SpawnLocation(newName, new Vector2d(spawnFields["lat"].currentValue, spawnFields["lon"].currentValue), selected_index));
+                    SpawnLocations.spawnLocations.Add(new SpawnLocation(newName, new Vector2d(spawnFields["lat"].CurrentValue, spawnFields["lon"].CurrentValue), selected_index));
                     VesselSpawnerField.Save();
                 }
 
-                if (GUI.Button(SThirdRect(++line, 0), StringUtils.Localize("#LOC_BDArmory_Settings_ClearDebrisNow"), BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SThirdRect(++line, 0), StringUtils.Localize("#LOC_BDArmory_Settings_ClearDebrisNow"), BDArmorySetup.ButtonStyle))
                 {
                     // Clean up debris now
                     BDACompetitionMode.Instance.RemoveDebrisNow();
                 }
-                if (GUI.Button(SThirdRect(line, 1), StringUtils.Localize("#LOC_BDArmory_Settings_ClearBystandersNow"), BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SThirdRect(line, 1), StringUtils.Localize("#LOC_BDArmory_Settings_ClearBystandersNow"), BDArmorySetup.ButtonStyle))
                 {
                     // Clean up bystanders now
                     BDACompetitionMode.Instance.RemoveNonCompetitors(true);
                 }
-                if (GUI.Button(SThirdRect(line, 2), StringUtils.Localize("#LOC_BDArmory_Settings_Observers"), BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SThirdRect(line, 2), StringUtils.Localize("#LOC_BDArmory_Settings_Observers"), BDArmorySetup.ButtonStyle))
                 {
-                    ShowObserverWindow(true, Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position);
+                    ShowObserverWindow(true, BDArmorySettings.UI_SCALE_ACTUAL * Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position);
                 }
                 line += 0.3f;
             }
 
-            if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_SPAWN_LOCATIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_SpawnLocations")}", BDArmorySettings.SHOW_SPAWN_LOCATIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide spawn locations
+            if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_SPAWN_LOCATIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_SpawnLocations")}", BDArmorySettings.SHOW_SPAWN_LOCATIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide spawn locations
             {
                 BDArmorySettings.SHOW_SPAWN_LOCATIONS = !BDArmorySettings.SHOW_SPAWN_LOCATIONS;
             }
@@ -505,10 +538,6 @@ namespace BDArmory.UI
                 }
                 planetBox.UpdateRect(SLeftButtonRect(line));
                 selected_index = planetBox.Show();
-                if (GUI.Button(SRightButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_WarpHere"), BDArmorySetup.BDGuiSkin.button))
-                {
-                    SpawnUtils.ShowSpawnPoint(selected_index, BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x, BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y, BDArmorySettings.VESSEL_SPAWN_ALTITUDE);
-                }
                 if (planetBox.IsOpen)
                 {
                     line += planetBox.Height / _lineHeight;
@@ -534,7 +563,7 @@ namespace BDArmory.UI
                 foreach (var spawnLocation in SpawnLocations.spawnLocations)
                 {
                     if (spawnLocation.worldIndex != selected_index) continue;
-                    if (GUI.Button(SQuarterRect(line, i++), spawnLocation.name, BDArmorySetup.BDGuiSkin.button))
+                    if (GUI.Button(SQuarterRect(line, i++), spawnLocation.name, BDArmorySetup.ButtonStyle))
                     {
                         switch (Event.current.button)
                         {
@@ -555,14 +584,17 @@ namespace BDArmory.UI
                 line += 0.3f;
             }
 
-            if (BDArmorySettings.WAYPOINTS_MODE || (BDArmorySettings.RUNWAY_PROJECT && (BDArmorySettings.RUNWAY_PROJECT_ROUND == 50 || BDArmorySettings.RUNWAY_PROJECT_ROUND == 55))) // S4R10
+            if (BDArmorySettings.WAYPOINTS_MODE)
             {
-                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_WAYPOINTS_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_WaypointsOptions")}", BDArmorySettings.SHOW_WAYPOINTS_OPTIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide waypoints section
+                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_WAYPOINTS_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_WaypointsOptions")}", BDArmorySettings.SHOW_WAYPOINTS_OPTIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide waypoints section
                 {
                     BDArmorySettings.SHOW_WAYPOINTS_OPTIONS = !BDArmorySettings.SHOW_WAYPOINTS_OPTIONS;
                 }
                 if (BDArmorySettings.SHOW_WAYPOINTS_OPTIONS)
                 {
+                    // Sanitise the waypoint course index in case the course list has changed.
+                    BDArmorySettings.WAYPOINT_COURSE_INDEX = Mathf.Clamp(BDArmorySettings.WAYPOINT_COURSE_INDEX, 0, WaypointCourses.CourseLocations.Count - 1);
+
                     // Select waypoint course
                     string waypointCourseName;
                     /*
@@ -576,42 +608,108 @@ namespace BDArmory.UI
                     */
                     waypointCourseName = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].name;
 
-                    GUI.Label(SLeftSliderRect(++line), $"Waypoint Course: ({waypointCourseName})", leftLabel);
+                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_ChooseCourse")}: ({waypointCourseName})", leftLabel); //Select COurse
                     BDArmorySettings.WAYPOINT_COURSE_INDEX = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINT_COURSE_INDEX, 0, WaypointCourses.CourseLocations.Count - 1));
 
-                    GUI.Label(SLeftSliderRect(++line), $"Waypoint Altitude: {(BDArmorySettings.WAYPOINTS_ALTITUDE > 0 ? $"({BDArmorySettings.WAYPOINTS_ALTITUDE:F0}m)" : "-Default-")}", leftLabel);
-                    BDArmorySettings.WAYPOINTS_ALTITUDE = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINTS_ALTITUDE, 0, 1000f), 50f);
+                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_Waypoint")} {StringUtils.Localize("#autoLOC_463493")}: {(BDArmorySettings.WAYPOINTS_ALTITUDE >= 0 ? $"({BDArmorySettings.WAYPOINTS_ALTITUDE:F0}m)" : StringUtils.Localize("#LOC_BDArmory_WP_CourseDefaults"))}", leftLabel); //Waypoint Altitude /use Course Settings
+                    BDArmorySettings.WAYPOINTS_ALTITUDE = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINTS_ALTITUDE, -50, 1000f), 50);
 
-                    GUI.Label(SLeftSliderRect(++line), $"Max Laps: {BDArmorySettings.WAYPOINT_LOOP_INDEX:F0}", leftLabel);
-                    BDArmorySettings.WAYPOINT_LOOP_INDEX = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINT_LOOP_INDEX, 1, 5));
+                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_MaxLaps")}: {BDArmorySettings.WAYPOINT_LOOP_INDEX:F0}", leftLabel); //max Laps
+                    BDArmorySettings.WAYPOINT_LOOP_INDEX = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINT_LOOP_INDEX, 1, BDArmorySettings.WAYPOINT_MAX_LAPS));
 
-                    GUI.Label(SLeftSliderRect(++line), $"Activate Guard After: {(BDArmorySettings.WAYPOINT_GUARD_INDEX < 0 ? "Never" : BDArmorySettings.WAYPOINT_GUARD_INDEX.ToString("F0"))}", leftLabel);
+                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_GuardActivate")}: {(BDArmorySettings.WAYPOINT_GUARD_INDEX < 0 ? "Never" : $"{StringUtils.Localize("#LOC_BDArmory_WP_Waypoint")} {BDArmorySettings.WAYPOINT_GUARD_INDEX.ToString("F0")}")}", leftLabel); //Activate Guard After
                     BDArmorySettings.WAYPOINT_GUARD_INDEX = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINT_GUARD_INDEX, -1, WaypointCourses.highestWaypointIndex));
 
                     if (BDArmorySettings.WAYPOINTS_VISUALIZE)
                     {
-                        GUI.Label(SLeftSliderRect(++line), $"Waypoint Size: {(BDArmorySettings.WAYPOINTS_SCALE > 0 ? $"({BDArmorySettings.WAYPOINTS_SCALE:F0}m)" : "-Default-")}", leftLabel);
+                        GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_Waypoint")} {StringUtils.Localize("#autoLOC_8200035")}: {(BDArmorySettings.WAYPOINTS_SCALE > 0 ? $"({BDArmorySettings.WAYPOINTS_SCALE:F0}m)" : StringUtils.Localize("#LOC_BDArmory_WP_CourseDefaults"))}", leftLabel); //Waypoint Radius; //use Course Settings
                         BDArmorySettings.WAYPOINTS_SCALE = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.WAYPOINTS_SCALE, 0, 1000f), 50f);
 
                         if (WaygateCount >= 0)
                         {
-                            GUI.Label(SLeftSliderRect(++line), $"Select Gate Model: {SelectedModel}", leftLabel);
-                            if (SelectedGate != (SelectedGate = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), SelectedGate, 0, WaygateCount), 1)))
+                            GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_WP_SelectModel")}: {SelectedModel}", leftLabel); //Waypoint Type
+                            if (SelectedGate != (SelectedGate = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), SelectedGate, -1, WaygateCount), 1)))
                             {
-                                SelectedModel = Path.GetFileNameWithoutExtension(gateFiles[(int)SelectedGate]);
+                                if (SelectedGate >= 0) SelectedModel = Path.GetFileNameWithoutExtension(gateFiles[(int)Mathf.Clamp(SelectedGate, 0, WaygateCount)]);
+                                else SelectedModel = string.Empty;
                             }
                         }
                     }
-
+                    if (BDArmorySetup.Instance.hasWPCourseSpawner)
+                    {
+                        if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_BDAWaypointBuilder_Title"), BDArmorySetup.showWPBuilderGUI ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide waypoints section
+                        {
+                            CourseBuilderGUI.Instance.SetVisible(!BDArmorySetup.showWPBuilderGUI);
+                            if (!BDArmorySetup.showWPBuilderGUI)
+                                BDArmorySetup.SaveConfig();
+                        }
+                    }
                     BDArmorySettings.WAYPOINTS_ONE_AT_A_TIME = GUI.Toggle(SLeftRect(++line), BDArmorySettings.WAYPOINTS_ONE_AT_A_TIME, StringUtils.Localize("#LOC_BDArmory_Settings_WaypointsOneAtATime"));
                     BDArmorySettings.WAYPOINTS_INFINITE_FUEL_AT_START = GUI.Toggle(SRightRect(line), BDArmorySettings.WAYPOINTS_INFINITE_FUEL_AT_START, StringUtils.Localize("#LOC_BDArmory_Settings_WaypointsInfFuelAtStart"));
                     BDArmorySettings.WAYPOINTS_VISUALIZE = GUI.Toggle(SLeftRect(++line), BDArmorySettings.WAYPOINTS_VISUALIZE, StringUtils.Localize("#LOC_BDArmory_Settings_WaypointsShow"));
                 }
             }
 
-            if (BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS != 11) // Tournament options
+            // Custom Spawn Template
+            if (BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS == 11)
             {
-                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_TOURNAMENT_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_TournamentOptions")}", BDArmorySettings.SHOW_TOURNAMENT_OPTIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide tournament options
+                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_CustomSpawnTemplateOptions")}", BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide tournament options
+                {
+                    BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS = !BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS;
+                }
+                if (BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS)
+                {
+                    line += 0.25f;
+                    var spawnTemplate = CustomTemplateSpawning.customSpawnConfig;
+                    spawnTemplate.name = GUIUtils.TextField(spawnTemplate.name, "Specify a name then save the template.", rect: SQuarterRect(++line, 0, 2)); // Writing in the text field updates the name of the current template.
+                    if (GUI.Button(SQuarterRect(line, 2), StringUtils.Localize("#LOC_BDArmory_Generic_Load"), BDArmorySetup.ButtonStyle))
+                    {
+                        CustomTemplateSpawning.Instance.ShowTemplateSelection(BDArmorySettings.UI_SCALE_ACTUAL * Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position);
+                    }
+                    if (GUI.Button(SQuarterRect(line, 3), StringUtils.Localize("#LOC_BDArmory_Generic_Save"), BDArmorySetup.ButtonStyle)) // Save overwrites the current template with the current vessel positions in the LoadedVesselSwitcher.
+                    {
+                        CustomTemplateSpawning.Instance.SaveTemplate();
+                    }
+                    if (GUI.Button(SQuarterRect(++line, 2), StringUtils.Localize("#LOC_BDArmory_Generic_New"), BDArmorySetup.ButtonStyle)) // New generates a new template from the current vessels in the LoadedVesselSwitcher.
+                    {
+                        spawnTemplate = CustomTemplateSpawning.Instance.NewTemplate();
+                    }
+                    if (GUI.Button(SQuarterRect(line, 3), StringUtils.Localize("#LOC_BDArmory_Settings_CustomSpawnTemplate_SaveCraftToTemplate"), BDArmorySetup.ButtonStyle)) // New generates a new template from the current vessels in the LoadedVesselSwitcher.
+                    {
+                        CustomTemplateSpawning.Instance.SaveCraftToTemplate();
+                    }
+                    line += 0.25f;
+                    // We then want a table of teams of craft buttons for selecting the craft with kerbal buttons beside them for selecting the kerbals.
+                    char teamName = 'A';
+                    foreach (var team in spawnTemplate.customVesselSpawnConfigs)
+                    {
+                        foreach (var member in team)
+                        {
+                            GUI.Label(ShortLabel(++line, 20), $"{teamName}: ");
+                            // if (GUI.Button(SQuarterRect(line, 0, 3, 20), Path.GetFileNameWithoutExtension(member.craftURL), BDArmorySetup.ButtonStyle))
+                            if (GUI.Button(SQuarterRect(line, 0, 3, 20), CustomTemplateSpawning.ShipName(member.craftURL), BDArmorySetup.ButtonStyle))
+                            {
+                                if (Event.current.button == 1)//Right click
+                                    CustomTemplateSpawning.Instance.HideVesselSelection(member);
+                                else
+                                    CustomTemplateSpawning.Instance.ShowVesselSelection(BDArmorySettings.UI_SCALE_ACTUAL * Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position, member, team);
+                            }
+                            if (GUI.Button(SQuarterRect(line, 3, 1), string.IsNullOrEmpty(member.kerbalName) ? "random" : member.kerbalName, BDArmorySetup.ButtonStyle))
+                            {
+                                if (Event.current.button == 1) // Right click
+                                    CustomTemplateSpawning.Instance.HideCrewSelection(member);
+                                else
+                                    CustomTemplateSpawning.Instance.ShowCrewSelection(BDArmorySettings.UI_SCALE_ACTUAL * Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position, member);
+                            }
+                        }
+                        ++teamName;
+                        line += 0.25f;
+                    }
+                }
+            }
+            // Tournament options
+            {
+                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.SHOW_TOURNAMENT_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_TournamentOptions")}", BDArmorySettings.SHOW_TOURNAMENT_OPTIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide tournament options
                 {
                     BDArmorySettings.SHOW_TOURNAMENT_OPTIONS = !BDArmorySettings.SHOW_TOURNAMENT_OPTIONS;
                 }
@@ -620,8 +718,13 @@ namespace BDArmory.UI
                     GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentDelayBetweenHeats")}: ({BDArmorySettings.TOURNAMENT_DELAY_BETWEEN_HEATS}s)", leftLabel); // Delay between heats
                     BDArmorySettings.TOURNAMENT_DELAY_BETWEEN_HEATS = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_DELAY_BETWEEN_HEATS, 0f, 15f));
 
-                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentTimeWarpBetweenRounds")}: ({(BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS > 0 ? $"{BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS}min" : "Off")})", leftLabel); // TimeWarp Between Rounds
-                    BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS / 5f, 0f, 72f)) * 5;
+                    GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentTimeWarpBetweenRounds")}: ({BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS switch
+                    {
+                        0 => StringUtils.Localize("#LOC_BDArmory_Generic_Off"),
+                        -5 => StringUtils.Localize("#LOC_BDArmory_Settings_TournamentTimeWarpDaylight"),
+                        _ => $"{BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS}min"
+                    }})", leftLabel); // TimeWarp Between Rounds
+                    BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS = BDAMath.RoundToUnit(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_TIMEWARP_BETWEEN_ROUNDS, -5f, 360f), 5);
 
                     GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentStyle")}: ({tournamentStyle})", leftLabel); // Tournament Style
                     if (BDArmorySettings.TOURNAMENT_STYLE != (BDArmorySettings.TOURNAMENT_STYLE = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_STYLE, 0f, tournamentStyleMax))))
@@ -639,18 +742,18 @@ namespace BDArmory.UI
                     if (BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS == 0) // FFA
                     {
                         GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentVesselsPerHeat")}:  ({(BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT > 0 ? BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT.ToString() : (BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT == -1 ? "Auto" : "Inf"))})", leftLabel); // Vessels Per Heat
-                        BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT, -1f, 20f));
+                        BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT, -1f, BDArmorySettings.TOURNAMENT_VESSELS_PER_HEAT_MAX));
 
                         GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentNPCsPerHeat")}:  ({BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT})", leftLabel); // NPCs Per Heat
-                        BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT, 0f, 10f));
+                        BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT, 0f, BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT_MAX));
                     }
                     else // Teams
                     {
                         GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentTeamsPerHeat")}:  ({BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT})", leftLabel); // Teams Per Heat
-                        BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT, BDArmorySettings.TOURNAMENT_STYLE == 2 ? 1f : 2f, 8f));
+                        BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT, BDArmorySettings.TOURNAMENT_STYLE == 2 ? 1f : 2f, BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT_MAX));
 
                         GUI.Label(SLeftSliderRect(++line), $"{StringUtils.Localize("#LOC_BDArmory_Settings_TournamentVesselsPerTeam")}:  ({(BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM > 0 ? BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM.ToString() : "auto")})", leftLabel); // Vessels Per Team
-                        BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM, 0f, 8f));
+                        BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM = Mathf.RoundToInt(GUI.HorizontalSlider(SRightSliderRect(line), BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM, 0f, BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM_MAX));
 
                         BDArmorySettings.TOURNAMENT_FULL_TEAMS = GUI.Toggle(SLeftRect(++line), BDArmorySettings.TOURNAMENT_FULL_TEAMS, StringUtils.Localize("#LOC_BDArmory_Settings_TournamentFullTeams"));  // Re-use craft to fill teams
                     }
@@ -676,21 +779,33 @@ namespace BDArmory.UI
                     else
                     {
                         GUI.Label(SLineRect(++line), $"ID: {BDATournament.Instance.tournamentID}, {BDATournament.Instance.teamCount} teams, {BDATournament.Instance.numberOfRounds} rounds, {BDATournament.Instance.teamsPerHeat} teams per heat, {BDATournament.Instance.numberOfHeats} heats per round,", leftLabel);
-                        GUI.Label(SLineRect(++line), $"{BDATournament.Instance.vesselCount} vessels,{(BDATournament.Instance.fullTeams ? "" : " up to")} {BDATournament.Instance.vesselsPerTeam} vessels per team per heat, {BDATournament.Instance.heatsRemaining} heats remaining.", leftLabel);
+                        GUI.Label(SLineRect(++line), $"{BDATournament.Instance.vesselCount} vessels,{(BDATournament.Instance.fullTeams ? "" : " up to")} {(BDATournament.Instance.vesselsPerTeam == 0 ? "auto" : BDATournament.Instance.vesselsPerTeam)} vessels per team per heat, {BDATournament.Instance.heatsRemaining} heats remaining.", leftLabel);
                     }
                     switch (BDATournament.Instance.tournamentStatus)
                     {
                         case TournamentStatus.Running:
                         case TournamentStatus.Waiting:
-                            if (GUI.Button(SLeftRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentStop"), BDArmorySetup.BDGuiSkin.button)) // Stop tournament
+                            if (GUI.Button(SLeftRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentStop"), BDArmorySetup.ButtonStyle)) // Stop tournament
                                 BDATournament.Instance.StopTournament();
                             GUI.Label(SRightRect(line), $" Status: {BDATournament.Instance.tournamentStatus},  Round {BDATournament.Instance.currentRound},  Heat {BDATournament.Instance.currentHeat}");
                             break;
-
                         default:
-                            if (GUI.Button(SLeftRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentSetup"), BDArmorySetup.BDGuiSkin.button)) // Setup tournament
+                            if (GUI.Button(SLeftRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentSetup"), BDArmorySetup.ButtonStyle)) // Setup tournament
                             {
                                 ParseAllSpawnFieldsNow();
+                                if (BDArmorySettings.WAYPOINTS_MODE)
+                                {
+                                    float spawnLatitude, spawnLongitude;
+                                    List<Waypoint> course;
+                                    spawnLatitude = (float)WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.x;
+                                    spawnLongitude = (float)WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.y;
+                                    course = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].waypoints;
+                                    float gridStartAngle = 0;
+                                    gridStartAngle = Vector3.Angle(FlightGlobals.currentMainBody.GetWorldSurfacePosition(spawnLatitude, spawnLongitude, 5) - FlightGlobals.currentMainBody.GetWorldSurfacePosition(90, 0, 5),
+                                        FlightGlobals.currentMainBody.GetWorldSurfacePosition(spawnLatitude, spawnLongitude, 5) - FlightGlobals.currentMainBody.GetWorldSurfacePosition(course[0].location.x, course[0].location.y, 5));
+                                    if (gridStartAngle < 0) gridStartAngle = Mathf.Abs(gridStartAngle) + 180;
+                                    BDArmorySettings.VESSEL_SPAWN_REF_HEADING = gridStartAngle;
+                                }
                                 BDATournament.Instance.SetupTournament(
                                     BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION,
                                     BDArmorySettings.TOURNAMENT_ROUNDS,
@@ -698,8 +813,8 @@ namespace BDArmory.UI
                                     BDArmorySettings.TOURNAMENT_NPCS_PER_HEAT,
                                     BDArmorySettings.TOURNAMENT_TEAMS_PER_HEAT,
                                     BDArmorySettings.TOURNAMENT_VESSELS_PER_TEAM,
-                                    BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
-                                    (TournamentStyle)BDArmorySettings.TOURNAMENT_STYLE,
+                                    BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS == 11 ? 1 : BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
+                                    BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS == 11 ? TournamentStyle.TemplateRNG : (TournamentStyle)BDArmorySettings.TOURNAMENT_STYLE,
                                     (TournamentRoundType)BDArmorySettings.TOURNAMENT_ROUND_TYPE
                                 );
                                 BDArmorySetup.SaveConfig();
@@ -707,7 +822,7 @@ namespace BDArmory.UI
 
                             if (BDATournament.Instance.tournamentStatus != TournamentStatus.Completed)
                             {
-                                if (GUI.Button(SRightRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentRun"), BDArmorySetup.BDGuiSkin.button)) // Run tournament
+                                if (GUI.Button(SRightRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_TournamentRun"), BDArmorySetup.ButtonStyle)) // Run tournament
                                 {
                                     _vesselsSpawned = false;
                                     SpawnUtils.CancelSpawning(); // Stop any spawning that's currently happening.
@@ -722,151 +837,134 @@ namespace BDArmory.UI
                     }
                 }
             }
-            else // Custom Spawn Template
+            ++line;
+            if (BDArmorySettings.WAYPOINTS_MODE)
             {
-                if (GUI.Button(SLineRect(++line), $"{(BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show"))} {StringUtils.Localize("#LOC_BDArmory_Settings_CustomSpawnTemplateOptions")}", BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide tournament options
+                if (!waypointsRunning)
                 {
-                    BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS = !BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS;
-                }
-                if (BDArmorySettings.CUSTOM_SPAWN_TEMPLATE_SHOW_OPTIONS)
-                {
-                    line += 0.25f;
-                    var spawnTemplate = CustomTemplateSpawning.Instance.customSpawnConfig;
-                    spawnTemplate.name = GUIUtils.TextField(spawnTemplate.name, "Specify a name then save the template.", rect: SQuarterRect(++line, 0, 2)); // Writing in the text field updates the name of the current template.
-                    if (GUI.Button(SQuarterRect(line, 2), StringUtils.Localize("#LOC_BDArmory_Generic_Load"), BDArmorySetup.BDGuiSkin.button))
+                    // Note:
+                    // - left click is run with waypoint spawn point
+                    // - right click is run with current spawn point
+                    // - middle click is run current vessel through waypoints
+                    if (GUI.Button(SLineRect(++line), "Run waypoints", BDArmorySetup.ButtonStyle))
                     {
-                        CustomTemplateSpawning.Instance.ShowTemplateSelection(Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position);
-                    }
-                    if (GUI.Button(SEighthRect(line, 6), StringUtils.Localize("#LOC_BDArmory_Generic_Save"), BDArmorySetup.BDGuiSkin.button)) // Save overwrites the current template with the current vessel positions in the LoadedVesselSwitcher.
-                    {
-                        CustomTemplateSpawning.Instance.SaveTemplate();
-                    }
-                    if (GUI.Button(SEighthRect(line, 7), StringUtils.Localize("#LOC_BDArmory_Generic_New"), BDArmorySetup.BDGuiSkin.button)) // New generates a new template from the current vessels in the LoadedVesselSwitcher.
-                    {
-                        spawnTemplate = CustomTemplateSpawning.Instance.NewTemplate();
-                    }
-                    line += 0.25f;
-                    // We then want a table of teams of craft buttons for selecting the craft with kerbal buttons beside them for selecting the kerbals.
-                    char teamName = 'A';
-                    foreach (var team in spawnTemplate.customVesselSpawnConfigs)
-                    {
-                        foreach (var member in team)
+                        if (BDArmorySetup.showWPBuilderGUI && !TournamentCoordinator.Instance.IsRunning) //delete loaded gates if builder is closed, but not if WP course is currently running
                         {
-                            GUI.Label(ShortLabel(++line, 20), $"{teamName}: ");
-                            // if (GUI.Button(SQuarterRect(line, 0, 3, 20), Path.GetFileNameWithoutExtension(member.craftURL), BDArmorySetup.BDGuiSkin.button))
-                            if (GUI.Button(SQuarterRect(line, 0, 3, 20), CustomTemplateSpawning.Instance.ShipName(member.craftURL), BDArmorySetup.BDGuiSkin.button))
+                            foreach (var gate in CourseBuilderGUI.Instance.loadedGates)
                             {
-                                if (Event.current.button == 1)//Right click
-                                    CustomTemplateSpawning.Instance.HideVesselSelection(member);
-                                else
-                                    CustomTemplateSpawning.Instance.ShowVesselSelection(Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position, member, team);
+                                gate.disabled = true;
+                                gate.gameObject.SetActive(false);
                             }
-                            if (GUI.Button(SQuarterRect(line, 3, 1), string.IsNullOrEmpty(member.kerbalName) ? "random" : member.kerbalName, BDArmorySetup.BDGuiSkin.button))
+                            CourseBuilderGUI.Instance.loadedGates.Clear();
+                        }
+                        BDATournament.Instance.StopTournament();
+                        if (TournamentCoordinator.Instance.IsRunning) // Stop either case.
+                        {
+                            TournamentCoordinator.Instance.Stop();
+                            TournamentCoordinator.Instance.StopForEach();
+                        }
+
+                        float spawnLatitude, spawnLongitude;
+                        List<Waypoint> course;
+                        spawnLatitude = (float)WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.x;
+                        spawnLongitude = (float)WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.y;
+                        course = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].waypoints;
+                        float gridStartAngle = 0;
+                        gridStartAngle = Vector3.Angle(FlightGlobals.currentMainBody.GetWorldSurfacePosition(spawnLatitude, spawnLongitude, 5) - FlightGlobals.currentMainBody.GetWorldSurfacePosition(90, 0, 5),
+                            FlightGlobals.currentMainBody.GetWorldSurfacePosition(spawnLatitude, spawnLongitude, 5) - FlightGlobals.currentMainBody.GetWorldSurfacePosition(course[0].location.x, course[0].location.y, 5));
+                        if (gridStartAngle < 0) gridStartAngle = Mathf.Abs(gridStartAngle) + 180;
+                        SpawnUtils.ResetVesselNamingDeconfliction();
+                        if (Event.current.button == 2) // Middle click => Move the current craft to the spawn point and set it running waypoints.
+                        {
+                            SpawnUtils.ShowSpawnPoint(
+                                WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].worldIndex,
+                                spawnLatitude,
+                                spawnLongitude,
+                                BDArmorySettings.VESSEL_SPAWN_ALTITUDE
+                            );
+                            TournamentCoordinator.Instance.Configure(null, new WaypointFollowingStrategy(course), null);
+                            TournamentCoordinator.Instance.Run();
+                        }
+                        else if (!BDArmorySettings.WAYPOINTS_ONE_AT_A_TIME)
+                        {
+                            if (BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS == 11)
                             {
-                                if (Event.current.button == 1) // Right click
-                                    CustomTemplateSpawning.Instance.HideCrewSelection(member);
-                                else
-                                    CustomTemplateSpawning.Instance.ShowCrewSelection(Event.current.mousePosition + BDArmorySetup.WindowRectVesselSpawner.position, member);
+                                if (CustomTemplateSpawning.Instance.ConfigureTemplate(true))
+                                {
+                                    CustomTemplateSpawning.Instance.SpawnCustomTemplate(CustomTemplateSpawning.customSpawnConfig);
+                                    TournamentCoordinator.Instance.Configure(null, new WaypointFollowingStrategy(course), null);
+                                    TournamentCoordinator.Instance.Run();
+                                }
+                            }
+                            else
+                            {
+                                TournamentCoordinator.Instance.Configure(new SpawnConfigStrategy(
+                                    new CircularSpawnConfig(
+                                        new SpawnConfig(
+                                            Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_WORLDINDEX : WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].worldIndex, // Right-click => use the VesselSpawnerWindow settings instead of the defaults.
+                                            Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x : spawnLatitude,
+                                            Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y : spawnLongitude,
+                                            BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
+                                            killEverythingFirst: true,
+                                            assignTeams: BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
+                                            numberOfTeams: BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
+                                            teamCounts: null,
+                                            teamsSpecific: null,
+                                            folder: BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
+                                        ),
+                                        BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
+                                        BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
+                                        //BDArmorySettings.VESSEL_SPAWN_REF_HEADING) //this needs to be angle from spawnpoint to first gate, relative to North
+                                        gridStartAngle)
+                                    ),
+                                    new WaypointFollowingStrategy(course),
+                                    CircularSpawning.Instance
+                                );
+                                // Run the waypoint competition.
+                                TournamentCoordinator.Instance.Run();
                             }
                         }
-                        ++teamName;
-                        line += 0.25f;
+                        else
+                        {
+                            var craftFiles = Directory.GetFiles(Path.GetFullPath(Path.Combine(KSPUtil.ApplicationRootPath, "AutoSpawn", BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION)), "*.craft").ToList();
+                            var strategies = craftFiles.Select(craftFile => new SpawnConfigStrategy(
+                                new CircularSpawnConfig(
+                                    new SpawnConfig(
+                                        Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_WORLDINDEX : WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].worldIndex,
+                                        Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x : spawnLatitude,
+                                        Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y : spawnLongitude,
+                                        BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
+                                        killEverythingFirst: true,
+                                        assignTeams: BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
+                                        numberOfTeams: 0, // This should always be 0 (FFA) to avoid the logic for spawning teams in one-at-a-time mode.
+                                        teamCounts: null,
+                                        teamsSpecific: null,
+                                        folder: null,
+                                        craftFiles: new List<string>() { craftFile }
+                                    ),
+                                    BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
+                                    BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
+                                    BDArmorySettings.VESSEL_SPAWN_REF_HEADING
+                                ))).ToList();
+                            TournamentCoordinator.Instance.RunForEach(strategies,
+                                new WaypointFollowingStrategy(course),
+                                CircularSpawning.Instance
+                            );
+                        }
+                        waypointsRunning = true;
                     }
-                    --line;
                 }
-            }
-            ++line;
-            if (BDArmorySettings.WAYPOINTS_MODE || (BDArmorySettings.RUNWAY_PROJECT && (BDArmorySettings.RUNWAY_PROJECT_ROUND == 50 || BDArmorySettings.RUNWAY_PROJECT_ROUND == 55))) // S4R10
-            {
-                if (GUI.Button(SLineRect(++line), "Run waypoints", BDArmorySetup.BDGuiSkin.button))
+                else
                 {
-                    BDATournament.Instance.StopTournament();
-                    if (TournamentCoordinator.Instance.IsRunning) // Stop either case.
+                    if (GUI.Button(SLineRect(++line), "Stop waypoints", BDArmorySetup.ButtonStyle))
                     {
-                        TournamentCoordinator.Instance.Stop();
-                        TournamentCoordinator.Instance.StopForEach();
-                    }
-                    float spawnLatitude, spawnLongitude;
-                    List<Waypoint> course; //adapt to how the spawn locations are displayed/selected 
-                    //add new GUI window for waypoint course creation; new name entry field for course, waypoints, save button to save WP coords
-                    //Spawn button to spawn in WP (+ WP visualizer); movement buttons/widget for moving Wp around (+ fineness slider to set increment amount); have these display to a numeric field for numfield editing instead?
-                    /*
-                    switch (BDArmorySettings.WAYPOINT_COURSE_INDEX)
-                    {
-                        default:
-                        case 1:
-                            //spawnLocation.location;
-                            spawnLatitude = WaypointCourses.CourseLocations[0].spawnPoint.x;
-                            spawnLongitude = WaypointCourses.CourseLocations[0].spawnPoint.y;
-                            course = WaypointCourses.CourseLocations[0].waypoints;
-                            break;
-                        case 2:
-                            spawnLatitude = WaypointCourses.CourseLocations[1].spawnPoint.x;
-                            spawnLongitude = WaypointCourses.CourseLocations[1].spawnPoint.y;
-                            course = WaypointCourses.CourseLocations[1].waypoints;
-                            break;
-                        case 3:
-                            spawnLatitude = WaypointCourses.CourseLocations[2].spawnPoint.x;
-                            spawnLongitude = WaypointCourses.CourseLocations[2].spawnPoint.y;
-                            course = WaypointCourses.CourseLocations[2].waypoints;
-                            break;
-                    }
-                    */
-                    spawnLatitude = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.x;
-                    spawnLongitude = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].spawnPoint.y;
-                    course = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].waypoints;
-
-                    if (!BDArmorySettings.WAYPOINTS_ONE_AT_A_TIME)
-                    {
-                        TournamentCoordinator.Instance.Configure(new SpawnConfigStrategy(
-                            new CircularSpawnConfig(
-                                new SpawnConfig(
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_WORLDINDEX : WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].worldIndex, // Right-click => use the VesselSpawnerWindow settings instead of the defaults.
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x : spawnLatitude,
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y : spawnLongitude,
-                                    BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
-                                    true,
-                                    BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
-                                    BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
-                                    null,
-                                    null,
-                                    BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
-                                ),
-                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
-                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE)
-                            ),
-                            new WaypointFollowingStrategy(course),
-                            CircularSpawning.Instance
-                        );
-
-                        // Run the waypoint competition.
-                        TournamentCoordinator.Instance.Run();
-                    }
-                    else
-                    {
-                        var craftFiles = Directory.GetFiles(Path.Combine(KSPUtil.ApplicationRootPath, "AutoSpawn", BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION), "*.craft").ToList();
-                        var strategies = craftFiles.Select(craftFile => new SpawnConfigStrategy(
-                            new CircularSpawnConfig(
-                                new SpawnConfig(
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_WORLDINDEX : WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].worldIndex,
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x : spawnLatitude,
-                                    Event.current.button == 1 ? BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y : spawnLongitude,
-                                    BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
-                                    true,
-                                    BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
-                                    0, // This should always be 0 (FFA) to avoid the logic for spawning teams in one-at-a-time mode.
-                                    null,
-                                    null,
-                                    null,
-                                    new List<string>() { craftFile }
-                                ),
-                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
-                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE
-                            ))).ToList();
-                        TournamentCoordinator.Instance.RunForEach(strategies,
-                            new WaypointFollowingStrategy(course),
-                            CircularSpawning.Instance
-                        );
+                        waypointsRunning = false;
+                        BDATournament.Instance.StopTournament();
+                        if (TournamentCoordinator.Instance.IsRunning) // Stop either case.
+                        {
+                            TournamentCoordinator.Instance.Stop();
+                            TournamentCoordinator.Instance.StopForEach();
+                        }
                     }
                 }
             }
@@ -874,13 +972,13 @@ namespace BDArmory.UI
             {
                 if (BDACompetitionMode.Instance.competitionIsActive || BDACompetitionMode.Instance.competitionStarting)
                 {
-                    if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_StopCompetition"), BDArmorySetup.BDGuiSkin.box)) // Stop competition.
+                    if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_StopCompetition"), BDArmorySetup.SelectedButtonStyle)) // Stop competition.
                         BDACompetitionMode.Instance.StopCompetition();
                 }
                 else
                 {
-                    var spawnAndStartCompetition = GUI.Button(SLeftButtonRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnAndStartCompetition"), BDArmorySetup.BDGuiSkin.button);
-                    var spawnOnly = GUI.Button(SRightButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnOnly"), BDArmorySetup.BDGuiSkin.button);
+                    var spawnAndStartCompetition = GUI.Button(SLeftButtonRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnAndStartCompetition"), BDArmorySetup.ButtonStyle);
+                    var spawnOnly = GUI.Button(SRightButtonRect(line), StringUtils.Localize("#LOC_BDArmory_Settings_SpawnOnly"), BDArmorySetup.ButtonStyle);
                     if (spawnOnly || spawnAndStartCompetition)
                     {
                         // Stop any currently running tournament.
@@ -893,15 +991,16 @@ namespace BDArmory.UI
                         // Configure the current custom spawn template.
                         if (CustomTemplateSpawning.Instance.ConfigureTemplate(spawnAndStartCompetition))
                         {
-                            // Spawn the craft and start the competition.
-                            CustomTemplateSpawning.Instance.SpawnCustomTemplate(CustomTemplateSpawning.Instance.customSpawnConfig);
+                            // Spawn the craft and maybe start the competition.
+                            SpawnUtils.ResetVesselNamingDeconfliction();
+                            CustomTemplateSpawning.Instance.SpawnCustomTemplate(CustomTemplateSpawning.customSpawnConfig);
                         }
                     }
                 }
             }
             else
             {
-                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_SingleSpawn"), _vesselsSpawned ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_SingleSpawn"), _vesselsSpawned ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))
                 {
                     BDATournament.Instance.StopTournament();
                     ParseAllSpawnFieldsNow();
@@ -916,16 +1015,18 @@ namespace BDArmory.UI
                                 BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
                                 BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
                                 BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
-                                true,
-                                BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
-                                BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
-                                null,
-                                null,
-                                BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
+                                BDArmorySettings.VESSEL_SPAWN_REF_HEADING,
+                                killEverythingFirst: true,
+                                assignTeams: BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
+                                numberOfTeams: BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
+                                teamCounts: null,
+                                teamsSpecific: null,
+                                spawnFolder: BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
                             ); // Spawn vessels.
                         }
                         else
                         {
+                            SpawnUtils.ResetVesselNamingDeconfliction();
                             CircularSpawning.Instance.SpawnAllVesselsOnce(
                                 BDArmorySettings.VESSEL_SPAWN_WORLDINDEX,
                                 BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x,
@@ -933,12 +1034,13 @@ namespace BDArmory.UI
                                 BDArmorySettings.VESSEL_SPAWN_ALTITUDE_,
                                 BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
                                 BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
-                                true,
-                                BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
-                                BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
-                                null,
-                                null,
-                                BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
+                                BDArmorySettings.VESSEL_SPAWN_REF_HEADING,
+                                killEverythingFirst: true,
+                                assignTeams: BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
+                                numberOfTeams: BDArmorySettings.VESSEL_SPAWN_NUMBER_OF_TEAMS,
+                                teamCounts: null,
+                                teamsSpecific: null,
+                                spawnFolder: BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
                             ); // Spawn vessels.
                             if (BDArmorySettings.VESSEL_SPAWN_START_COMPETITION_AUTOMATICALLY)
                                 StartCoroutine(StartCompetitionOnceSpawned());
@@ -954,16 +1056,17 @@ namespace BDArmory.UI
                             BDArmorySettings.VESSEL_SPAWN_ALTITUDE,
                             BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
                             BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
-                            false,
-                            false,
-                            0,
-                            null,
-                            null,
-                            BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
+                            BDArmorySettings.VESSEL_SPAWN_REF_HEADING,
+                            killEverythingFirst: false,
+                            assignTeams: false,
+                            numberOfTeams: 0,
+                            teamCounts: null,
+                            teamsSpecific: null,
+                            spawnFolder: BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
                         ); // Spawn vessels, without killing off other vessels or changing camera positions.
                     }
                 }
-                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_ContinuousSpawning"), ContinuousSpawning.Instance.vesselsSpawningContinuously ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))
+                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_ContinuousSpawning"), ContinuousSpawning.Instance.vesselsSpawningContinuously ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))
                 {
                     BDATournament.Instance.StopTournament();
                     ParseAllSpawnFieldsNow();
@@ -973,17 +1076,24 @@ namespace BDArmory.UI
                             new CircularSpawnConfig(
                                 new SpawnConfig(
                                     BDArmorySettings.VESSEL_SPAWN_WORLDINDEX,
-                                    BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x, BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y, BDArmorySettings.VESSEL_SPAWN_ALTITUDE_,
-                                    true, true, 1, null, null,
-                                    BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
+                                    BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x,
+                                    BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y,
+                                    BDArmorySettings.VESSEL_SPAWN_ALTITUDE_,
+                                    killEverythingFirst: true,
+                                    assignTeams: BDArmorySettings.VESSEL_SPAWN_REASSIGN_TEAMS,
+                                    numberOfTeams: 1,
+                                    teamCounts: null,
+                                    teamsSpecific: null,
+                                    folder: BDArmorySettings.VESSEL_SPAWN_FILES_LOCATION
                                 ),
                                 BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE ? BDArmorySettings.VESSEL_SPAWN_DISTANCE : BDArmorySettings.VESSEL_SPAWN_DISTANCE_FACTOR,
-                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE
+                                BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
+                                BDArmorySettings.VESSEL_SPAWN_REF_HEADING
                             )
                             ); // Spawn vessels continuously at 1km above terrain.
                     }
                 }
-                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_CancelSpawning"), (_vesselsSpawned || ContinuousSpawning.Instance.vesselsSpawningContinuously) ? BDArmorySetup.BDGuiSkin.button : BDArmorySetup.BDGuiSkin.box))
+                if (GUI.Button(SLineRect(++line), StringUtils.Localize("#LOC_BDArmory_Settings_CancelSpawning"), (_vesselsSpawned || ContinuousSpawning.Instance.vesselsSpawningContinuously) ? BDArmorySetup.ButtonStyle : BDArmorySetup.SelectedButtonStyle))
                 {
                     if (_vesselsSpawned)
                         Debug.Log("[BDArmory.VesselSpawnerWindow]: Resetting spawning vessel button.");
@@ -995,7 +1105,7 @@ namespace BDArmory.UI
                 }
             }
             // #if DEBUG
-            //             if (BDArmorySettings.DEBUG_SPAWNING && GUI.Button(SLineRect(++line), "Test point spawn", BDArmorySetup.BDGuiSkin.button))
+            //             if (BDArmorySettings.DEBUG_SPAWNING && GUI.Button(SLineRect(++line), "Test point spawn", BDArmorySetup.ButtonStyle))
             //             {
             //                 StartCoroutine(SingleVesselSpawning.Instance.Spawn(
             //                     new CircularSpawnConfig(
@@ -1020,6 +1130,7 @@ namespace BDArmory.UI
 
             line += 1.25f; // Bottom internal margin
             _windowHeight = (line * _lineHeight);
+            GUIUtils.DragWindow();
         }
 
         IEnumerator StartCompetitionOnceSpawned()
@@ -1037,6 +1148,12 @@ namespace BDArmory.UI
                         BDACompetitionMode.Instance.StartRapidDeployment(0);
                         yield break;
                     case 53:
+                        BDACompetitionMode.Instance.StartRapidDeployment(0);
+                        yield break;
+                    case 67:
+                        BDACompetitionMode.Instance.StartRapidDeployment(0);
+                        yield break;
+                    case 77:
                         BDACompetitionMode.Instance.StartRapidDeployment(0);
                         yield break;
                 }
@@ -1064,7 +1181,7 @@ namespace BDArmory.UI
         {
             if (show)
             {
-                observerWindowRect.position = position + new Vector2(50, -observerWindowRect.height / 2); // Centred and slightly offset to allow clicking the same spot.
+                observerWindowRect.position = position + new Vector2(50, -BDArmorySettings.UI_SCALE_ACTUAL * observerWindowRect.height / 2); // Centred and slightly offset to allow clicking the same spot.
                 RefreshObservers();
                 bringObserverWindowToFront = true;
             }
@@ -1079,7 +1196,6 @@ namespace BDArmory.UI
         }
         void ObserverWindow(int windowID)
         {
-            GUI.DragWindow(new Rect(0, 0, observerWindowRect.width, 20));
             GUILayout.BeginVertical();
             observerSelectionScrollPos = GUILayout.BeginScrollView(observerSelectionScrollPos, GUI.skin.box, GUILayout.Width(observerWindowRect.width - 15), GUILayout.MaxHeight(observerWindowRect.height - 20));
             int count = 0;
@@ -1089,7 +1205,7 @@ namespace BDArmory.UI
                     if (potentialObserver.Current == null) { potentialObserversNeedsRefreshing = true; continue; }
                     bool isSelected = Observers.Contains(potentialObserver.Current);
                     if (isSelected) ++count;
-                    if (GUILayout.Button(potentialObserver.Current.vesselName, isSelected ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button, GUILayout.Height(30)))
+                    if (GUILayout.Button(potentialObserver.Current.vesselName, isSelected ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle, GUILayout.Height(30)))
                     {
                         if (isSelected) Observers.Remove(potentialObserver.Current);
                         else Observers.Add(potentialObserver.Current);
@@ -1098,15 +1214,16 @@ namespace BDArmory.UI
             GUILayout.EndScrollView();
             if (count == potentialObservers.Count)
             {
-                if (GUILayout.Button(StringUtils.Localize("#LOC_BDArmory_ObserverSelection_SelectNone"), BDArmorySetup.BDGuiSkin.box, GUILayout.Height(30)))
+                if (GUILayout.Button(StringUtils.Localize("#LOC_BDArmory_ObserverSelection_SelectNone"), BDArmorySetup.SelectedButtonStyle, GUILayout.Height(30)))
                     Observers.Clear();
             }
             else
             {
-                if (GUILayout.Button(StringUtils.Localize("#LOC_BDArmory_ObserverSelection_SelectAll"), BDArmorySetup.BDGuiSkin.button, GUILayout.Height(30)))
+                if (GUILayout.Button(StringUtils.Localize("#LOC_BDArmory_ObserverSelection_SelectAll"), BDArmorySetup.ButtonStyle, GUILayout.Height(30)))
                     Observers = potentialObservers.Where(o => o != null).ToHashSet();
             }
             GUILayout.EndVertical();
+            GUIUtils.DragWindow();
             GUIUtils.RepositionWindow(ref observerWindowRect);
             GUIUtils.UpdateGUIRect(observerWindowRect, _observerGUICheckIndex);
             GUIUtils.UseMouseEventInRect(observerWindowRect);
@@ -1123,8 +1240,8 @@ namespace BDArmory.UI
             {
                 if (vessel == null) continue;
                 if (vessel.vesselType == VesselType.Debris || vessel.vesselType == VesselType.SpaceObject) continue; // Ignore debris and space objects.
-                if (VesselModuleRegistry.GetModuleCount<Control.IBDAIControl>(vessel) > 0 // Check for an AI.
-                    && VesselModuleRegistry.GetModuleCount<Control.MissileFire>(vessel) > 0 // Check for a WM.
+                if (vessel.ActiveController().AI != null // Check for an AI.
+                    && vessel.ActiveController().WM != null // Check for a WM.
                     && vessel.IsControllable
                 ) continue; // It's an active vessel, skip it.
                 potentialObservers.Add(vessel);

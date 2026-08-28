@@ -1,9 +1,8 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System;
 using UnityEngine;
 
-using BDArmory.Control;
 using BDArmory.Extensions;
 using BDArmory.Settings;
 using BDArmory.UI;
@@ -12,6 +11,7 @@ namespace BDArmory.Utils
 {
     public static class AIUtils
     {
+        public enum UseAccel {None, Immediate, Smoothed};
         /// <summary>
         /// Predict a future position of a vessel given its current position, velocity and acceleration
         /// </summary>
@@ -19,18 +19,32 @@ namespace BDArmory.Utils
         /// <param name="time">after this time</param>
         /// <returns>Vector3 extrapolated position</returns>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static Vector3 PredictPosition(this Vessel v, float time)
+        public static Vector3 PredictPosition(this Vessel v, float time, UseAccel immediate=UseAccel.Immediate)
         {
-            Vector3 pos = v.CoM;
-            pos +=  time * v.Velocity();
-            pos += 0.5f * time * time * v.acceleration_immediate;
-            return pos;
+            var vel = v.Velocity();
+            var acc = immediate switch
+            {
+                UseAccel.None => Vector3d.zero,
+                UseAccel.Smoothed => v.acceleration,
+                _ => v.acceleration_immediate
+            };
+            var time2 = 0.5f * time * time;
+            return new Vector3(
+                (float)(v.CoM.x + time * vel.x + time2 * acc.x),
+                (float)(v.CoM.y + time * vel.y + time2 * acc.y),
+                (float)(v.CoM.z + time * vel.z + time2 * acc.z)
+            );
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector3 PredictPosition(Vector3 position, Vector3 velocity, Vector3 acceleration, float time)
         {
-            return position + time * velocity + 0.5f * time * time * acceleration;
+            float time2 = 0.5f * time * time;
+            return new Vector3(
+                position.x + time * velocity.x + time2 * acceleration.x,
+                position.y + time * velocity.y + time2 * acceleration.y,
+                position.z + time * velocity.z + time2 * acceleration.z);
+            //return position + time * velocity + 0.5f * time * time * acceleration;
         }
 
         public enum CPAType
@@ -67,7 +81,7 @@ namespace BDArmory.Utils
         public static float TimeToCPA(this Vessel vessel, Vector3 targetPosition, Vector3 targetVelocity, Vector3 targetAcceleration, float maxTime = float.MaxValue, CPAType cpaType = CPAType.Earliest)
         {
             if (vessel == null) return 0f; // We don't have a vessel.
-            Vector3 relPosition = targetPosition - vessel.transform.position;
+            Vector3 relPosition = targetPosition - vessel.CoM;
             Vector3 relVelocity = targetVelocity - vessel.Velocity();
             Vector3 relAcceleration = targetAcceleration - vessel.acceleration;
             return TimeToCPA(relPosition, relVelocity, relAcceleration, maxTime, cpaType);
@@ -171,7 +185,7 @@ namespace BDArmory.Utils
                         case CPAType.Closest:
                             t0 = Mathf.Clamp(t0, 0, maxTime);
                             t1 = Mathf.Clamp(t1, 0, maxTime);
-                            time = ((relPosition + t0 * relVelocity + t0 * t0 / 2f * relAcceleration).sqrMagnitude < (relPosition +  t1 * relVelocity + t1 * t1 / 2f * relAcceleration).sqrMagnitude) ? t0 : t1;
+                            time = ((relPosition + t0 * relVelocity + t0 * t0 / 2f * relAcceleration).sqrMagnitude < (relPosition + t1 * relVelocity + t1 * t1 / 2f * relAcceleration).sqrMagnitude) ? t0 : t1;
                             break;
                     }
                     return Mathf.Clamp(time, 0, maxTime);
@@ -199,29 +213,6 @@ namespace BDArmory.Utils
             return (float)body.TerrainAltitude(body.GetLatitude(position), body.GetLongitude(position), underwater);
         }
 
-        /// <summary>
-        /// Get the local position of your place in a formation
-        /// </summary>
-        /// <param name="index">index of formation position</param>
-        /// <returns>vector of location relative to your commandLeader</returns>
-        public static Vector3 GetLocalFormationPosition(this IBDAIControl ai, int index)
-        {
-            if (ai.commandLeader == null) return Vector3.zero;
-
-            float indexF = (float)index;
-            indexF++;
-
-            float rightSign = indexF % 2 == 0 ? -1 : 1;
-            float positionFactor = Mathf.Ceil(indexF / 2);
-            float spread = ai.commandLeader.spread;
-            float lag = ai.commandLeader.lag;
-
-            float right = rightSign * positionFactor * spread;
-            float back = positionFactor * lag * -1;
-
-            return new Vector3(right, back, 0);
-        }
-
         public static Vessel VesselClosestTo(Vector3 position, bool useGeoCoords = false)
         {
             Vessel closestV = null;
@@ -236,9 +227,9 @@ namespace BDArmory.Utils
                 while (v.MoveNext())
                 {
                     if (v.Current == null || !v.Current.loaded || v.Current.packed) continue;
-                    if (VesselModuleRegistry.ignoredVesselTypes.Contains(v.Current.vesselType)) continue;
-                    var wms = VesselModuleRegistry.GetMissileFire(v.Current);
-                    if (wms != null)
+                    if (VesselModuleRegistry.IgnoredVesselTypes.Contains(v.Current.vesselType)) continue;
+                    var wm = v.Current.ActiveController().WM;
+                    if (wm != null)
                     {
                         if (Vector3.SqrMagnitude(v.Current.vesselTransform.position - position) < closestSqrDist)
                         {

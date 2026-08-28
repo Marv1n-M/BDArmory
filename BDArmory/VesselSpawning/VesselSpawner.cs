@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 
 using BDArmory.Control;
+using BDArmory.Modules;
 using BDArmory.Settings;
 using BDArmory.Weapons;
 
@@ -25,8 +26,8 @@ namespace BDArmory.VesselSpawning
             get
             {
                 if (_spawnProbeLocation != null) return _spawnProbeLocation;
-                _spawnProbeLocation = Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "BDArmory", "craft", "SpawnProbe.craft"); // SpaceDock location
-                if (!File.Exists(_spawnProbeLocation)) _spawnProbeLocation = Path.Combine(KSPUtil.ApplicationRootPath, "Ships", "SPH", "SpawnProbe.craft"); // CKAN location
+                _spawnProbeLocation = Path.GetFullPath(Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "BDArmory", "craft", "SpawnProbe.craft")); // SpaceDock location
+                if (!File.Exists(_spawnProbeLocation)) _spawnProbeLocation = Path.GetFullPath(Path.Combine(KSPUtil.ApplicationRootPath, "Ships", "SPH", "SpawnProbe.craft")); // CKAN location
                 if (!File.Exists(_spawnProbeLocation))
                 {
                     _spawnProbeLocation = null;
@@ -232,6 +233,7 @@ namespace BDArmory.VesselSpawning
                             KerbalRoster.SetExperienceTrait(newCrewMember, KerbalRoster.pilotTrait); // Make the kerbal a pilot (so they can use SAS properly).
                             KerbalRoster.SetExperienceLevel(newCrewMember, KerbalRoster.GetExperienceMaxLevel()); // Make them experienced.
                             newCrewMember.isBadass = true; // Make them bad-ass (likes nearby explosions).
+                            newCrewMember.courage = 0.5f; //make their G-tolerance identical; 0.5 Courage BadS Pilot yields 20.5G tolerance
                             crewData.Add(newCrewMember); // Add them into the crewData list.
                         }
                         else
@@ -246,7 +248,7 @@ namespace BDArmory.VesselSpawning
                 int specifiedCrewUsed = 0;
                 foreach (var part in crewParts)
                 {
-                    int crewToAdd = (BDArmorySettings.VESSEL_SPAWN_FILL_SEATS > 0 || (BDArmorySettings.RUNWAY_PROJECT && BDArmorySettings.RUNWAY_PROJECT_ROUND == 42)) ?
+                    int crewToAdd = BDArmorySettings.VESSEL_SPAWN_FILL_SEATS > 0 ?
                         part.CrewCapacity - part.protoModuleCrew.Count : crewData != null && crewData.Count - specifiedCrewUsed > 0 ?
                         Math.Min(crewData.Count - specifiedCrewUsed, part.CrewCapacity - part.protoModuleCrew.Count) : 1;
                     for (int crewCount = 0; crewCount < crewToAdd; ++crewCount)
@@ -269,6 +271,13 @@ namespace BDArmory.VesselSpawning
                         KerbalRoster.SetExperienceTrait(crewMember, KerbalRoster.pilotTrait); // Make the kerbal a pilot (so they can use SAS properly).
                         KerbalRoster.SetExperienceLevel(crewMember, KerbalRoster.GetExperienceMaxLevel()); // Make them experienced.
                         crewMember.isBadass = true; // Make them bad-ass (likes nearby explosions).
+                        crewMember.courage = 0.5f;
+                        if (BDArmorySettings.VESSEL_SPAWN_KERBAL_SUIT_TYPE >= 0) // Override the suit type
+                        {
+                            var kerbalSuit = part.FindModuleImplementing<KerbalSuitSelector>();
+                            if (kerbalSuit != null)
+                                kerbalSuit.SetSuit((KerbalSuitSelector.KerbalSuit)Mathf.Clamp(BDArmorySettings.VESSEL_SPAWN_KERBAL_SUIT_TYPE, 0, 4));
+                        }
 
                         // Add them to the part
                         part.AddCrewmemberAt(crewMember, part.protoModuleCrew.Count);
@@ -331,7 +340,7 @@ namespace BDArmory.VesselSpawning
                     KerbalRoster.SetExperienceTrait(crewMember, KerbalRoster.pilotTrait); // Make the kerbal a pilot (so they can use SAS properly).
                     KerbalRoster.SetExperienceLevel(crewMember, KerbalRoster.GetExperienceMaxLevel()); // Make them experienced.
                     crewMember.isBadass = true; // Make them bad-ass (likes nearby explosions).
-
+                    crewMember.courage = 0.5f;
                     crewArray[i++] = crewMember;
                 }
 
@@ -472,13 +481,13 @@ namespace BDArmory.VesselSpawning
 
         static List<Part> SortPartTree(List<Part> parts)
         {
-            List<Part> Parts = parts.Where(p => p.parent == null).ToList(); // There can be only one.
+            List<Part> Parts = [.. parts.Where(p => p.parent == null)]; // There can be only one.
             while (Parts.Count() < parts.Count())
             {
                 var partsToAdd = parts.Where(p => !Parts.Contains(p) && Parts.Contains(p.parent));
                 if (partsToAdd.Count() == 0)
                 {
-                    Debug.Log($"[BDArmory.VesselSpawner]: Part count mismatch when sorting the part-tree: {Parts.Count()} vs {parts.Count()}");
+                    Debug.LogError($"[BDArmory.VesselSpawner]: Part count mismatch when sorting the part-tree: {Parts.Count()} vs {parts.Count()}");
                     break;
                 }
                 Parts.AddRange(partsToAdd);

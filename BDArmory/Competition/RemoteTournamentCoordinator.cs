@@ -68,8 +68,6 @@ namespace BDArmory.Competition
             var activeVesselIds = scoreClient.activeVessels.ToList();
             var craftUrls = activeVesselModels.Select(e => e.craft_url);
             // TODO: need coords from descriptor, or fallback to local settings
-            // var kerbin = FlightGlobals.GetBodyByName("Kerbin");
-            // var bodyIndex = FlightGlobals.GetBodyIndex(kerbin);
             var bodyIndex = BDArmorySettings.VESSEL_SPAWN_WORLDINDEX;
             var latitude = BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.x;
             var longitude = BDArmorySettings.VESSEL_SPAWN_GEOCOORDS.y;
@@ -115,7 +113,8 @@ namespace BDArmory.Competition
                         activeVesselModels.Select(m => vesselSource.GetLocalPath(m.id)).ToList()
                     ),
                     spawnRadius,
-                    BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE
+                    BDArmorySettings.VESSEL_SPAWN_DISTANCE_TOGGLE,
+                    BDArmorySettings.VESSEL_SPAWN_REF_HEADING
                 )
             );
             var waypoints = WaypointCourses.CourseLocations[BDArmorySettings.WAYPOINT_COURSE_INDEX].waypoints;

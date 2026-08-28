@@ -24,11 +24,12 @@ namespace BDArmory.VesselSpawning
 
         void LogMessage(string message, bool toScreen = true, bool toLog = true) => LogMessageFrom("SingleVesselSpawning", message, toScreen, toLog);
 
+        // This is only used by the deprecated RemoteOrchestration SpawnStrategies
         public override IEnumerator Spawn(SpawnConfig spawnConfig)
         {
             if (spawnConfig.craftFiles == null || spawnConfig.craftFiles.Count == 0)
             {
-                var spawnFolder = Path.Combine(AutoSpawnPath, spawnConfig.folder);
+                var spawnFolder = Path.GetFullPath(Path.Combine(AutoSpawnPath, spawnConfig.folder));
                 spawnConfig.craftFiles = Directory.GetFiles(spawnFolder, "*.craft").ToList();
                 if (spawnConfig.craftFiles.Count == 0)
                 {
@@ -50,6 +51,7 @@ namespace BDArmory.VesselSpawning
             vesselsSpawning = true; // Signal that we've started the spawning vessels routine.
             vesselSpawnSuccess = false; // Set our success flag to false for now.
             spawnFailureReason = SpawnFailureReason.None; // Reset the spawn failure reason.
+            SpawnUtils.ResetVesselNamingDeconfliction();
         }
 
         public IEnumerator SpawnVessel(string craftUrl, double latitude, double longitude, double altitude, float initialHeading = 90f, float initialPitch = 0f)
@@ -62,9 +64,18 @@ namespace BDArmory.VesselSpawning
             var north = VectorUtils.GetNorthVector(spawnPoint, spawnBody);
             var direction = (Quaternion.AngleAxis(initialHeading, radialUnitVector) * north).ProjectOnPlanePreNormalized(radialUnitVector).normalized;
             var airborne = altitude > 10;
-            var spawnInOrbit = altitude + spawnBody.Radius >= spawnBody.minOrbitalDistance; // Min safe orbital distance
+            var spawnInOrbit = altitude >= spawnBody.MinSafeAltitude(); // Min safe orbital altitude
             var withInitialVelocity = airborne && BDArmorySettings.VESSEL_SPAWN_INITIAL_VELOCITY;
-            VesselSpawnConfig vesselSpawnConfig = new VesselSpawnConfig(craftUrl, spawnPoint, direction, (float)altitude, initialPitch, airborne, spawnInOrbit);
+            VesselSpawnConfig vesselSpawnConfig = new VesselSpawnConfig(
+                craftUrl,
+                spawnPoint,
+                direction,
+                (float)altitude,
+                initialPitch,
+                airborne,
+                spawnInOrbit,
+                reuseURLVesselName: BDATournament.Instance.tournamentStatus == TournamentStatus.Running || TournamentCoordinator.Instance.IsRunning
+            );
 
             // Spawn vessel.
             yield return SpawnSingleVessel(vesselSpawnConfig);
@@ -93,7 +104,8 @@ namespace BDArmory.VesselSpawning
                     yield break;
                 }
 
-                AddToActiveCompetition(vessel, airborne);
+                if (!airborne) SpawnUtils.AirborneActivation(vessel, false); // Activate ground-spawned craft (air-spawned craft are already active).
+                BDACompetitionMode.Instance.AddToActiveCompetition(vessel);
             }
 
             vesselSpawnSuccess = true;

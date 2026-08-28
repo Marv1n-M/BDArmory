@@ -1,5 +1,8 @@
-﻿using System.Collections;
+using System;
 using System.Collections.Generic;
+using System.Collections;
+using System.IO;
+using System.Linq;
 using KSP.UI;
 using KSP.UI.Screens;
 using UnityEngine;
@@ -24,6 +27,8 @@ namespace BDArmory.UI
         public const string BDACategoryKey = "bdacategory";
         public const string AutoBDACategoryKey = "autobdacategory";
         public const int SubcategoryGroup = 412440121;
+
+        static readonly string customCategoriesConfigURL = "GameData/BDArmory/PluginData/CustomCategories.cfg";
 
         /// <summary>
         /// Adding to this dictionary before the category buttons are created will add more bda categories.
@@ -87,6 +92,7 @@ namespace BDArmory.UI
         private void Awake()
         {
             Instance = this;
+            LoadCustomCategories();
             bool partsDetected = false;
             using (var parts = PartLoader.LoadedPartsList.GetEnumerator())
                 while (parts.MoveNext())
@@ -102,6 +108,10 @@ namespace BDArmory.UI
                 }
             // Part autocategorization
             if (partsDetected)
+            {
+                // Set our category to 1 more than the highest category enum value. Note: this breaks type safety for this enum, but doesn't seem to cause issues.
+                PartCategories BDAPartCategory = (PartCategories)(Enum.GetValues(typeof(PartCategories)).Cast<int>().Max() + 1);
+
                 using (var parts = PartLoader.LoadedPartsList.GetEnumerator())
                     while (parts.MoveNext())
                     {
@@ -109,7 +119,7 @@ namespace BDArmory.UI
                             continue;
                         if (parts.Current.TechHidden || parts.Current.TechRequired == "Unresearchable")
                         {
-                            parts.Current.partConfig.RemoveValue(BDACategoryKey); 
+                            parts.Current.partConfig.RemoveValue(BDACategoryKey);
                             continue;
                         }
                         if (parts.Current.partConfig.HasValue(BDACategoryKey))
@@ -147,7 +157,7 @@ namespace BDArmory.UI
                                 // weapon class is not parsed when in editor, so using missileType
                                 if (missileLauncher.missileType.ToLower() == "bomb")
                                     parts.Current.partConfig.AddValue(AutoBDACategoryKey, "Bombs");
-                                else if (missileLauncher.missileType.ToLower() == "torpedo" || missileLauncher.missileType.ToLower() == "depthcharge")
+                                else if (missileLauncher.missileType.ToLower() == "torpedo" || missileLauncher.missileType.ToLower() == "depthcharge" || missileLauncher.missileType.ToLower() == "aswmissile")
                                     parts.Current.partConfig.AddValue(AutoBDACategoryKey, "Torpedoes");
                                 else
                                     parts.Current.partConfig.AddValue(AutoBDACategoryKey, "Missiles");
@@ -183,12 +193,51 @@ namespace BDArmory.UI
                                             parts.Current.partConfig.AddValue(AutoBDACategoryKey, "Ammo");
                             }
                         }
+                        if (parts.Current.category == PartCategories.none && parts.Current.partConfig.HasValue(AutoBDACategoryKey)) // BDA parts that don't fall into the main KSP categories.
+                        {
+                            parts.Current.category = BDAPartCategory; // Set their category to our custom value so that searching works (since search ignores the "none" category).
+                        }
                     }
+            }
         }
 
         private void OnDestroy()
         {
             GameEvents.onGUIEditorToolbarReady.Remove(LoadBDArmoryCategory);
+        }
+
+        void LoadCustomCategories()
+        {
+            var configURL = Path.GetFullPath(Path.Combine(KSPUtil.ApplicationRootPath, customCategoriesConfigURL));
+            var fileNode = ConfigNode.Load(configURL);
+            if (fileNode == null) // If the file doesn't exist, create it, but don't overwrite it if it does exist.
+            {
+                fileNode = new ConfigNode();
+                if (!Directory.GetParent(configURL).Exists)
+                { Directory.GetParent(configURL).Create(); }
+                fileNode.AddNode("CustomCategories");
+                fileNode.Save(configURL);
+            }
+            if (!fileNode.HasNode("CustomCategories"))
+            {
+                fileNode.AddNode("CustomCategories");
+            }
+            string customCategoriesComment = "Add custom BDA subcategories using the format: CategoryName = CategoryIconPath (e.g., Misc = BDArmory/Textures/Misc). Only non-preexisting categories will be added. Empty categories won't be shown.";
+            ConfigNode customCategories = fileNode.GetNode("CustomCategories");
+            customCategories.comment = customCategoriesComment;
+            foreach (ConfigNode.Value category in customCategories.values)
+            {
+                // Note: we use CategoryIcons for the check as Categories gets pared down depending on the parts actually available.
+                if (CategoryIcons.ContainsKey(category.name)) continue;
+                Categories.Add(category.name);
+                if (!GameDatabase.Instance.ExistsTexture(category.value))
+                {
+                    Debug.LogWarning($"[BDArmory.BDAEditorCategory]: Icon for {category.name} not found at {category.value}. Using default icon.");
+                    category.value = "BDArmory/Textures/icon";
+                }
+                Debug.Log($"[BDArmory.BDAEditorCategory]: Adding category {category.name} with icon {category.value}.");
+                CategoryIcons.Add(category.name, category.value);
+            }
         }
 
         public static string GetTexturePath(string category)
@@ -342,7 +391,7 @@ namespace BDArmory.UI
                     button.btnToggleGeneric.SetGroup(412440121);
                     button.transform.SetParent(BDAPartBar, false);
                     // button.transform.position = new Vector3(BDACategory.button.transform.position.x + 34, 424, 750) + button_offset * SubcategoryButtons.Count;
-                    button.transform.position = new Vector3(BDACategory.button.transform.position.x + 34, panelTop - button_offset.y, 750) + button_offset * SubcategoryButtons.Count;
+                    button.transform.position = new Vector3(BDACategory.button.transform.position.x + 34 * GameSettings.UI_SCALE, panelTop - button_offset.y, 750) + button_offset * SubcategoryButtons.Count;
                     categorizer_button.DeleteSubcategory();
                     SubcategoryButtons.Add(button);
                     // Gotta use a saved value, because the enumerator changes the value during the run
@@ -404,12 +453,12 @@ namespace BDArmory.UI
             bool shouldOpen = BDArmorySettings.SHOW_CATEGORIES && FilterByFunctionCategory.button.activeButton.Value && BDACategory.button.activeButton.Value;
             if (shouldOpen && !expanded)
             {
-                ExpandPartSelector(offset);
+                ExpandPartSelector(offset * GameSettings.UI_SCALE);
                 expanded = true;
             }
             else if (!shouldOpen && expanded)
             {
-                ExpandPartSelector(-offset);
+                ExpandPartSelector(-offset * GameSettings.UI_SCALE);
                 expanded = false;
             }
 
@@ -421,6 +470,7 @@ namespace BDArmory.UI
             }
             if (SettingsOpen)
             {
+                if (BDArmorySettings.UI_SCALE_ACTUAL != 1) GUIUtility.ScaleAroundPivot(BDArmorySettings.UI_SCALE_ACTUAL * Vector2.one, SettingsWindow.position);
                 SettingsWindow = GUI.Window(9476026, SettingsWindow, DrawSettingsWindow, "", BDArmorySetup.BDGuiSkin.window);
             }
 

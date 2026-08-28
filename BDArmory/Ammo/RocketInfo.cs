@@ -29,7 +29,7 @@ namespace BDArmory.Bullets
         public bool nuclear { get; private set; }
         public bool beehive { get; private set; }
         public string subMunitionType { get; private set; }
-        public int subProjectileCount { get; private set; }
+        public int projectileCount { get; private set; }
         public float thrustDeviation { get; private set; }
         public string rocketModelPath { get; private set; }
 
@@ -38,7 +38,7 @@ namespace BDArmory.Bullets
         public static RocketInfo defaultRocket;
 
         public RocketInfo(string name, string DisplayName, float rocketMass, float caliber, float apMod, float thrust, float thrustTime,
-                         bool shaped, bool flak, bool EMP, bool choker, bool gravitic, bool impulse, float massMod, float force, bool explosive, bool incendiary, float tntMass, bool nuclear, bool beehive, string subMunitionType, int subProjectileCount, float thrustDeviation, string rocketModelPath)
+                         bool shaped, bool flak, bool EMP, bool choker, bool gravitic, bool impulse, float massMod, float force, bool explosive, bool incendiary, float tntMass, bool nuclear, bool beehive, string subMunitionType, int projectileCount, float thrustDeviation, string rocketModelPath)
         {
             this.name = name;
             this.DisplayName = DisplayName;
@@ -61,7 +61,7 @@ namespace BDArmory.Bullets
             this.nuclear = nuclear;
             this.beehive = beehive;
             this.subMunitionType = subMunitionType;
-            this.subProjectileCount = subProjectileCount;
+            this.projectileCount = projectileCount;
             this.thrustDeviation = thrustDeviation;
             this.rocketModelPath = rocketModelPath;
         }
@@ -104,7 +104,7 @@ namespace BDArmory.Bullets
                         (bool)ParseField(node, "nuclear", typeof(bool)),
                         (bool)ParseField(node, "beehive", typeof(bool)),
                         (string)ParseField(node, "subMunitionType", typeof(string)),
-                        Math.Max((int)ParseField(node, "subProjectileCount", typeof(int)), 1),
+                        Math.Max((int)ParseField(node, "projectileCount", typeof(int)), 1),
                         (float)ParseField(node, "thrustDeviation", typeof(float)),
                         (string)ParseField(node, "rocketModelPath", typeof(string))
                     );
@@ -152,7 +152,7 @@ namespace BDArmory.Bullets
                             (bool)ParseField(node, "nuclear", typeof(bool)),
                             (bool)ParseField(node, "beehive", typeof(bool)),
                             (string)ParseField(node, "subMunitionType", typeof(string)),
-                            (int)ParseField(node, "subProjectileCount", typeof(int)),
+                            (int)ParseField(node, "projectileCount", typeof(int)),
                             (float)ParseField(node, "thrustDeviation", typeof(float)),
                             (string)ParseField(node, "rocketModelPath", typeof(string))
                         )
@@ -187,10 +187,11 @@ namespace BDArmory.Bullets
                     { throw new ArgumentException("Invalid type specified."); }
                 }
                 catch (Exception e)
-                { throw new ArgumentException("Field '" + field + "': '" + value + "' could not be parsed as '" + type.ToString() + "' | " + e.ToString(), field); }
+                { throw new ArgumentException($"Field '{field}': '{value}' could not be parsed as '{type}' | {e.Message}", field); }
             }
             catch (Exception e)
             {
+                if (field == "name") throw; // Sanity check for field "name" to avoid potential stack overflow.
                 if (defaultRocket != null)
                 {
                     // Give a warning about the missing or invalid value, then use the default value using reflection to find the field.
@@ -203,7 +204,9 @@ namespace BDArmory.Bullets
                     }
                     else
                     {
-                        Debug.LogError("[BDArmory.BulletInfo]: Using default value of " + defaultValue.ToString() + " for " + field + " | " + e.ToString());
+                        string name = "unknown";
+                        try { name = (string)ParseField(node, "name", typeof(string)); } catch { }
+                        Debug.LogError($"[BDArmory.BulletInfo]: Using default value of {defaultValue} for {field} of {name} | {e.Message}");
                     }
                     return defaultValue;
                 }

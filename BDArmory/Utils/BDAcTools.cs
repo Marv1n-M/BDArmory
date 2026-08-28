@@ -37,9 +37,6 @@ namespace BDArmory.Utils
             return result;
         }
 
-        public static string AppPath = KSPUtil.ApplicationRootPath.Replace("\\", "/");
-        public static string PlugInDataPath = AppPath + "GameData/BDAcCategorynFS/Plugin/";
-
         public static FloatCurve stringToFloatCurve(string curveString)
         {
             FloatCurve resultCurve = new FloatCurve();
@@ -137,7 +134,7 @@ namespace BDArmory.Utils
             List<string> source = names.Split(';').ToList<string>();
             for (int i = source.Count - 1; i >= 0; i--)
             {
-                if (source[i] == string.Empty)
+                if ((trimWhiteSpace ? source[i].Trim() : source[i]) == string.Empty)
                 {
                     source.RemoveAt(i);
                 }
@@ -200,7 +197,7 @@ namespace BDArmory.Utils
                 Debug.LogWarning("[BDArmory.BDAcTools]: Unable to find UIPartActionWindow list");
                 return null;
             }
-            foundField:
+        foundField:
 
             List<UIPartActionWindow> uiPartActionWindows = (List<UIPartActionWindow>)windowListField.GetValue(controller);
             if (uiPartActionWindows == null)

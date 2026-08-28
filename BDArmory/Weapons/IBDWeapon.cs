@@ -1,3 +1,5 @@
+using static BDArmory.Weapons.Missiles.MissileBase;
+
 namespace BDArmory.Weapons
 {
     public interface IBDWeapon
@@ -10,9 +12,13 @@ namespace BDArmory.Weapons
 
         float GetEngageRange();
 
-        string GetMissileType();
+        float GetEngageFOV();
+
+        MissileType GetMissileType();
 
         string GetPartName();
+
+        float GetWeaponChannel();
 
         Part GetPart();
 

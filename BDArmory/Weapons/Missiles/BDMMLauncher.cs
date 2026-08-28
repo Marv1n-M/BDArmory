@@ -1,14 +1,15 @@
 using UnityEngine;
 
-using BDArmory.Control;
 using BDArmory.Utils;
 
 namespace BDArmory.Weapons.Missiles
 {
-    public class BDMMLauncher : PartModule
+    public class BDMMLauncher : BDAPartModule
     {
         public override void OnStart(StartState state)
         {
+            base.OnStart(state);
+            if (!HighLogic.LoadedSceneIsFlight) return;
             part.force_activate();
         }
 

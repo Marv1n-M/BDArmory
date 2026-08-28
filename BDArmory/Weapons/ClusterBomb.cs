@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using UniLinq;
+using System.Linq;
 using UnityEngine;
 
 using BDArmory.Extensions;
@@ -10,7 +10,7 @@ using BDArmory.Weapons.Missiles;
 
 namespace BDArmory.Weapons
 {
-    public class ClusterBomb : PartModule
+    public class ClusterBomb : BDAPartModule
     {
         public List<GameObject> submunitions;
         List<GameObject> fairings;
@@ -39,8 +39,36 @@ namespace BDArmory.Weapons
 
         public override void OnStart(StartState state)
         {
+            base.OnStart(state);
+            if (HighLogic.LoadedSceneIsFlight)
+            {
+                part.force_activate();
+            }
+
             submunitions = new List<GameObject>();
-            IEnumerator<Transform> sub = part.FindModelTransforms("submunition").AsEnumerable().GetEnumerator();
+            Transform[] sub = part.FindModelTransforms("submunition");
+            
+            for (int i = 0; i < sub.Length; i++)
+            {
+                Transform curr = sub[i];
+                if (curr == null) continue;
+                submunitions.Add(curr.gameObject);
+
+                if (HighLogic.LoadedSceneIsFlight)
+                {
+                    Rigidbody subRb = curr.gameObject.GetComponent<Rigidbody>();
+                    if (!subRb)
+                    {
+                        subRb = curr.gameObject.AddComponent<Rigidbody>();
+                    }
+
+                    subRb.isKinematic = true;
+                    subRb.mass = part.mass / sub.Length;
+                }
+                curr.gameObject.SetActive(false);
+            }
+
+            /*IEnumerator<Transform> sub = part.FindModelTransforms("submunition").AsEnumerable().GetEnumerator();
 
             while (sub.MoveNext())
             {
@@ -60,7 +88,7 @@ namespace BDArmory.Weapons
                 }
                 sub.Current.gameObject.SetActive(false);
             }
-            sub.Dispose();
+            sub.Dispose();*/
 
             fairings = new List<GameObject>();
             IEnumerator<Transform> fairing = part.FindModelTransforms("fairing").AsEnumerable().GetEnumerator();
@@ -84,6 +112,7 @@ namespace BDArmory.Weapons
 
         public override void OnFixedUpdate()
         {
+            base.OnFixedUpdate();
             if (missileLauncher != null && missileLauncher.HasFired &&
                 missileLauncher.TimeIndex > deployDelay &&
                 !deployed && AltitudeTrigger())
@@ -193,7 +222,7 @@ namespace BDArmory.Weapons
         {
             ContactPoint contact = col.contacts[0];
             Vector3 pos = contact.point;
-            ExplosionFx.CreateExplosion(pos, blastForce, subExplModelPath, subExplSoundPath, ExplosionSourceType.Missile, 0, null, sourceVesselName, null, null, default, -1, false, rb.mass * 1000);
+            ExplosionFx.CreateExplosion(pos, blastForce, subExplModelPath, subExplSoundPath, ExplosionSourceType.Missile, 0, null, sourceVesselName, null, null, default, -1, false, rb.mass * 1000, Hitpart: col.gameObject.GetComponentInParent<Part>());
         }
 
         void FixedUpdate()
@@ -233,7 +262,7 @@ namespace BDArmory.Weapons
 
                     if (hitPart != null || CheckBuildingHit(hit))
                     {
-                        Detonate(hit.point);
+                        Detonate(hit.point, hitPart);
                     }
                     else if (hitPart == null)
                     {
@@ -249,9 +278,9 @@ namespace BDArmory.Weapons
             }
         }
 
-        void Detonate(Vector3 pos)
+        void Detonate(Vector3 pos, Part hitPart = null)
         {
-            ExplosionFx.CreateExplosion(pos, blastForce, subExplModelPath, subExplSoundPath, ExplosionSourceType.Missile, 0, null, sourceVesselName, null, null, default, -1, false, rb.mass * 1000);
+            ExplosionFx.CreateExplosion(pos, blastForce, subExplModelPath, subExplSoundPath, ExplosionSourceType.Missile, 0, null, sourceVesselName, null, null, default, -1, false, rb.mass * 1000, Hitpart: hitPart, sourceVelocity: rb.velocity + BDKrakensbane.FrameVelocityV3f);
             Destroy(gameObject);
         }
 

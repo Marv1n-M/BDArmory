@@ -5,6 +5,8 @@ using KSP.Localization;
 using BDArmory.Settings;
 using BDArmory.UI;
 using BDArmory.Utils;
+using System.Linq;
+using System;
 
 namespace BDArmory.Evolution
 {
@@ -81,6 +83,7 @@ namespace BDArmory.Evolution
                 _windowHeight
             );
             BDArmorySetup.SetGUIOpacity();
+            if (BDArmorySettings.UI_SCALE_ACTUAL != 1) GUIUtility.ScaleAroundPivot(BDArmorySettings.UI_SCALE_ACTUAL * Vector2.one, BDArmorySetup.WindowRectEvolution.position);
             BDArmorySetup.WindowRectEvolution = GUI.Window(
                 8008135,
                 BDArmorySetup.WindowRectEvolution,
@@ -121,8 +124,7 @@ namespace BDArmory.Evolution
             float line = 0.25f;
             float offset = _titleHeight + _margin;
 
-            GUI.DragWindow(new Rect(0, 0, BDArmorySettings.EVOLUTION_WINDOW_WIDTH - _titleHeight / 2 - 2, _titleHeight));
-            if (GUI.Button(SLineRect(++line), (BDArmorySettings.SHOW_EVOLUTION_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show")) + " " + StringUtils.Localize("#LOC_BDArmory_Evolution_Options"), BDArmorySettings.SHOW_EVOLUTION_OPTIONS ? BDArmorySetup.BDGuiSkin.box : BDArmorySetup.BDGuiSkin.button))//Show/hide evolution options
+            if (GUI.Button(SLineRect(++line), (BDArmorySettings.SHOW_EVOLUTION_OPTIONS ? StringUtils.Localize("#LOC_BDArmory_Generic_Hide") : StringUtils.Localize("#LOC_BDArmory_Generic_Show")) + " " + StringUtils.Localize("#LOC_BDArmory_Evolution_Options"), BDArmorySettings.SHOW_EVOLUTION_OPTIONS ? BDArmorySetup.SelectedButtonStyle : BDArmorySetup.ButtonStyle))//Show/hide evolution options
             {
                 BDArmorySettings.SHOW_EVOLUTION_OPTIONS = !BDArmorySettings.SHOW_EVOLUTION_OPTIONS;
             }
@@ -164,6 +166,19 @@ namespace BDArmory.Evolution
             }
             GUI.Label(new Rect(_margin + 2 * fifth, offset, 3 * fifth, _lineHeight), statusLine);
             offset += _lineHeight;
+
+            // Display configuration of each variant currently running
+            if (status == EvolutionStatus.RunningTournament)
+            {
+                foreach (var variant in evolution.ActiveVariantGroup().variants)
+                {
+                    // Print a line for the first mutated part to represent that variant. (we don't want one line per symmetry part here, only one line per variant)
+                    var part = variant.mutatedParts.First();
+                    GUI.Label(new Rect(_margin, offset, 5 * fifth, _lineHeight), string.Format("{0}:, {2}: {3}, from: {5} to: {4}, part_id: {1}", variant.name, part.partName, part.moduleName, part.paramName, Math.Round(part.value, 3), Math.Round(part.referenceValue, 3)));
+                    offset += _lineHeight;
+                }
+            }
+
             GUI.Label(new Rect(_margin, offset, fifth, _lineHeight), $"{StringUtils.Localize("#LOC_BDArmory_Evolution_Group")}: ");
             GUI.Label(new Rect(_margin + fifth, offset, fifth, _lineHeight), evolution.GroupId.ToString());
             GUI.Label(new Rect(_margin + 2 * fifth, offset, fifth, _lineHeight), $"{StringUtils.Localize("#LOC_BDArmory_Evolution_Heat")}: ");
@@ -181,7 +196,7 @@ namespace BDArmory.Evolution
                     buttonText = "Cancel";
                     break;
             }
-            if (GUI.Button(new Rect(_margin, offset, nextButton ? 2 * _windowWidth / 3 - _margin : _windowWidth - 2 * _margin, _lineHeight), buttonText, BDArmorySetup.BDGuiSkin.button))
+            if (GUI.Button(new Rect(_margin, offset, nextButton ? 2 * _windowWidth / 3 - _margin : _windowWidth - 2 * _margin, _lineHeight), buttonText, BDArmorySetup.ButtonStyle))
             {
                 switch (status)
                 {
@@ -197,6 +212,7 @@ namespace BDArmory.Evolution
 
             _windowHeight = offset;
 
+            GUIUtils.DragWindow();
             GUIUtils.RepositionWindow(ref BDArmorySetup.WindowRectEvolution); // Prevent it from going off the screen edges.
         }
     }

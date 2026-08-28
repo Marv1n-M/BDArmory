@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using BDArmory.Extensions;
+using UnityEngine;
 
 namespace BDArmory.CounterMeasure
 {
@@ -48,7 +49,7 @@ namespace BDArmory.CounterMeasure
 
         void FixedUpdate()
         {
-            float speedOrAccel = (vessel.atmDensity > 0.05) ? (float)vessel.srfSpeed : Mathf.Abs((float)vessel.acceleration_immediate.magnitude);
+            float speedOrAccel = (!vessel.InVacuum()) ? (float)vessel.srfSpeed : Mathf.Abs((float)vessel.acceleration_immediate.magnitude);
             chaffScalar = Mathf.MoveTowards(chaffScalar, chaffMax,
                 Mathf.Clamp(speedRegenMult * speedOrAccel, minRegen, maxRegen) * Time.fixedDeltaTime);
         }

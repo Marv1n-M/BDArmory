@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
@@ -10,6 +10,8 @@ namespace BDArmory.Armor
     public class ArmorInfo
     {
         public string name { get; private set; }
+
+        public string localizedName { get; private set; } //display name
         public float Density { get; private set; } //mass kg/m3 lighter is better. Or is it?
         public float Strength { get; private set; } //in MPa, yieldstrength for material, controls fail point for material when projectile can penetrate. Higher is better
         public float Hardness { get; private set; } //hardness, in MPa, of material. Controls how much deformation impacting projectiles experience
@@ -19,6 +21,7 @@ namespace BDArmory.Armor
                                                      //Too low, and armor is brittle. Too High, and armor cannot effectively stop projectiles in reasonable distance
         public float Diffusivity { get; private set; } //ability to disperse electrical/thermal energy when material is subject to laser/EMP attack. Higher is better
         public float SafeUseTemp { get; private set; } //In Kelvin, determines max temp armor retains full mechanical properties
+        public float radarReflectivity { get; private set; } //radar stealthiness
         public float Cost { get; private set; }
 
         public float vFactor { get; private set; }
@@ -40,9 +43,10 @@ namespace BDArmory.Armor
         public static List<string> armorNames;
         public static ArmorInfo defaultArmor;
 
-        public ArmorInfo(string name, float Density, float Strength, float Hardness, float yield, float youngModulus, float Ductility, float Diffusivity, float SafeUseTemp, float Cost, float defaultPenShrapnel, float defaultPenHEAT)
+        public ArmorInfo(string name, string localizedName, float Density, float Strength, float Hardness, float yield, float youngModulus, float Ductility, float Diffusivity, float SafeUseTemp, float Stealth, float Cost, float defaultPenShrapnel, float defaultPenHEAT)
         {
             this.name = name;
+            this.localizedName = (localizedName == "def" ? name : localizedName);
             this.Density = Density;
             this.Strength = Strength;
             this.Hardness = Hardness;
@@ -51,6 +55,7 @@ namespace BDArmory.Armor
             this.Ductility = Ductility;
             this.Diffusivity = Diffusivity;
             this.SafeUseTemp = SafeUseTemp;
+            this.radarReflectivity = Stealth;
             this.Cost = Cost;
 
             // Since we don't actually need yield and youngModulus we'll just calculate
@@ -122,6 +127,7 @@ namespace BDArmory.Armor
                     Debug.Log("[BDArmory.ArmorInfo]: Parsing default armor definition from " + nodes[i].parent.name);
                     defaultArmor = new ArmorInfo(
                         "def",
+                        (string)ParseField(node, "localizedName", typeof(string)),
                         (float)ParseField(node, "Density", typeof(float)),
                         (float)ParseField(node, "Strength", typeof(float)),
                         (float)ParseField(node, "Hardness", typeof(float)),
@@ -130,6 +136,7 @@ namespace BDArmory.Armor
                         (float)ParseField(node, "Ductility", typeof(float)),
                         (float)ParseField(node, "Diffusivity", typeof(float)),
                         (float)ParseField(node, "SafeUseTemp", typeof(float)),
+                        (float)ParseField(node, "radarReflectivity", typeof(float)),
                         (float)ParseField(node, "Cost", typeof(float)),
                         defaultPenShrapnel,
                         defaultPenHEAT
@@ -158,6 +165,7 @@ namespace BDArmory.Armor
                     armors.Add(
                         new ArmorInfo(
                             name_,
+                        (string)ParseField(node, "localizedName", typeof(string)),
                         (float)ParseField(node, "Density", typeof(float)),
                         (float)ParseField(node, "Strength", typeof(float)),
                         (float)ParseField(node, "Hardness", typeof(float)),
@@ -166,6 +174,7 @@ namespace BDArmory.Armor
                         (float)ParseField(node, "Ductility", typeof(float)),
                         (float)ParseField(node, "Diffusivity", typeof(float)),
                         (float)ParseField(node, "SafeUseTemp", typeof(float)),
+                        (float)ParseField(node, "radarReflectivity", typeof(float)),
                         (float)ParseField(node, "Cost", typeof(float)),
                         defaultPenShrapnel,
                         defaultPenHEAT
